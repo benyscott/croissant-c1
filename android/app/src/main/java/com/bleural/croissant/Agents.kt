@@ -14,7 +14,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -182,7 +184,11 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
         lastByFolder["$agent|$cwd"]?.takeIf { System.currentTimeMillis() - it.second < withinMs }?.first
 
     /** Whether a hold here has somewhere to go: an open session, not in the middle of a turn, its words not being typed over. */
-    val canTake: Boolean get() = _chat.value?.let { it.opened && !it.running && it.asking == null && !it.editing } == true
+    val canTake: Boolean get() = _chat.value?.let { (it.opened && !it.running && it.asking == null) || it.editing } == true
+
+    private val _inserts = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** A hold's words while the waiting words are being edited: the editor puts them in at its cursor. */
+    val inserts: SharedFlow<String> = _inserts
 
     /** The grace window after a hold, in ms: its words wait this long, to be cancelled or edited, before they are sent. 0 sends at once. */
     @Volatile var sendDelayMs = 2_000L
@@ -194,6 +200,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
      */
     fun say(words: String) {
         val c = _chat.value ?: return
+        if (c.editing) { _inserts.tryEmit(words); return }
         val all = c.pending?.let { "$it $words" } ?: words
         if (c.cancelSoon) { _chat.update { it?.copy(pending = null, cancelSoon = false, editSoon = false) }; return }
         if (c.editSoon) { _chat.update { it?.copy(pending = all, editing = true, editSoon = false, unsent = null) }; return }

@@ -9,6 +9,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.maxLength
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import com.bleural.croissant.ui.OwnTextField
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.animation.core.spring
@@ -64,11 +72,12 @@ internal sealed interface Held {
 
     companion object {
         fun of(voice: VoiceState, sending: String?, unsent: String?, pending: String? = null, editing: Boolean = false, editSoon: Boolean = false, cancelSoon: Boolean = false): Held? = when {
+            // Being edited: the editor stays up through a hold, whose words go in at its cursor.
+            pending != null && editing -> Editing(pending)
             voice.dictate && voice.phase == Phase.Error -> Failed(voice.error ?: "the hold did not get through")
             // Cancelled while settling: the card goes now, its words dropped as they land.
             voice.dictate && voice.phase != Phase.Idle && cancelSoon -> null
             voice.dictate && voice.phase != Phase.Idle -> Heard(listOfNotNull(pending, voice.transcript.ifBlank { null }).joinToString(" "), voice.phase == Phase.Listening, editSoon)
-            pending != null && editing -> Editing(pending)
             pending != null -> Pending(pending)
             sending != null -> Sending(sending)
             unsent != null -> Unsent(unsent)
@@ -85,11 +94,12 @@ internal sealed interface Held {
 @Composable
 internal fun HeldCard(
     held: Held, hue: Color, level: () -> Float, onRetry: () -> Unit, away: String,
+    inserts: kotlinx.coroutines.flow.Flow<String> = kotlinx.coroutines.flow.emptyFlow(),
     windowMs: Long = 2_000L, onCancel: () -> Unit = {}, onEdit: () -> Unit = {}, onSendEdited: (String) -> Unit = {},
     onEditSoon: () -> Unit = {}, onCancelSoon: () -> Unit = {}, onSendNow: () -> Unit = {},
 ) {
     if (held is Held.Pending) return PendingCard(held.words, hue, windowMs, onCancel, onEdit, onSendNow)
-    if (held is Held.Editing) return EditingCard(held.words, hue, onCancel, onSendEdited)
+    if (held is Held.Editing) return EditingCard(held.words, hue, inserts, onCancel, onSendEdited)
     val fill = when (held) {
         is Held.Heard -> GROUND
         is Held.Sending -> hue
@@ -208,25 +218,44 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
             Pill("cancel", GROUND, DANGER, Modifier.border(2.px, DANGER, RoundedCornerShape(23.px))) { Cues.play(Sound.Destroy); onCancel() }
             Spacer(Modifier.weight(1f))
         }
-        Spacer(Modifier.height(16.px))
-        Box(Modifier.fillMaxWidth().height(64.px).clip(RoundedCornerShape(32.px)).background(hue)
-            .clickable(remember { MutableInteractionSource() }, indication = null) { Cues.play(Sound.Commit); onSend() }) {
-            Text("send now", style = PILL, color = GROUND, modifier = Modifier.align(Alignment.Center))
-        }
     }
 }
 
 /** A hold's words typed over on the keys, the grace window stopped: send them as they are now, or cancel. */
 @Composable
-private fun EditingCard(words: String, hue: Color, onCancel: () -> Unit, onSend: (String) -> Unit) {
+private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.flow.Flow<String>, onCancel: () -> Unit, onSend: (String) -> Unit) {
     val state = remember { TextFieldState(words) }
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { requester.requestFocus() }
+    // A hold while editing: its words go in where the cursor is (over the selection), spaced from what is either side.
+    LaunchedEffect(Unit) {
+        inserts.collect { said ->
+            state.edit {
+                val at = selection.min
+                val before = if (at > 0 && !asCharSequence()[at - 1].isWhitespace()) " " else ""
+                val after = if (selection.max < length && !asCharSequence()[selection.max].isWhitespace()) " " else ""
+                val put = before + said.trim() + after
+                replace(at, selection.max, put)
+                selection = androidx.compose.ui.text.TextRange(at + put.length - after.length)
+            }
+        }
+    }
     val r = remember(hue) { ramp(hue) }
     Column(Modifier.padding(start = CARD_X.px, end = CARD_X.px).fillMaxWidth()
         .clip(RoundedCornerShape(16.px)).background(GROUND).border(3.px, hue, RoundedCornerShape(16.px))) {
         Spacer(Modifier.height(16.px))
-        TitleField(state, r, INK, 2_000, Modifier.focusRequester(requester), onFocus = {}, onDone = { Cues.play(Sound.Commit); onSend(state.text.toString()) })
+        // The words at reading size, as on the card before the tap: Body, not the big title.
+        HueSelection(r) {
+            OwnTextField(
+                state,
+                textStyle = BeamType.Body.copy(color = INK),
+                cursorBrush = SolidColor(hue),
+                inputTransformation = InputTransformation.maxLength(2_000),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { Cues.play(Sound.Commit); onSend(state.text.toString()) }),
+                modifier = Modifier.focusRequester(requester).fillMaxWidth().padding(start = IN_START.px, end = IN_END.px),
+            )
+        }
         Box(Modifier.fillMaxWidth().height(92.px)) {
             Row(Modifier.align(Alignment.TopEnd).padding(top = 26.px, end = 20.px)) {
                 Pill("cancel", DANGER, GROUND) { Cues.play(Sound.Destroy); onCancel() }

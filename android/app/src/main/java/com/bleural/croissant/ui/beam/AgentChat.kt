@@ -96,7 +96,7 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
                     Text("hold to start a chat in $folder", style = BeamType.Body, color = SUB,
                         modifier = Modifier.padding(start = 20.px, end = 28.px).wordsAt(50f))
                 }
-            } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer",
+            } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts,
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
                 onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
             Spacer(Modifier.height(40.px))
@@ -195,7 +195,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                             }
                         }
                         if (held != null) {
-                            HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer",
+                            HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts,
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
                 onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
                             Spacer(Modifier.height(16.px))
