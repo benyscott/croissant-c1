@@ -222,6 +222,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
 
     /** Words still waiting with no window running (the hold over them brought nothing): start it again. */
     fun resumeWindow() {
+        if (_chat.value?.cancelSoon == true) return cancelPending()
         val p = _chat.value?.takeIf { !it.editing }?.pending ?: return
         if (waiting?.isActive == true) return
         _chat.update { it?.copy(pending = null) }
@@ -231,7 +232,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     /** Drop the words in their grace window: nothing of them reaches the agent. */
     fun cancelPending() {
         waiting?.cancel()
-        _chat.update { it?.copy(pending = null, editing = false) }
+        _chat.update { it?.copy(pending = null, editing = false, cancelSoon = false, editSoon = false) }
     }
 
     /** Stop the grace window to type over the words; [sendEdited] or [cancelPending] ends it. */
