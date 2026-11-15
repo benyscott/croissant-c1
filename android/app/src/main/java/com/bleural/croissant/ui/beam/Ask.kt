@@ -91,7 +91,8 @@ internal fun AskPage(
     val started = live.parts.isNotEmpty() || live.error != null
     val spot = when {
         empty || live.refused -> AskSpot.None
-        kept.isEmpty() && showsLive && !started -> AskSpot.Middle
+        // Big in the middle only until your words start to show: then it makes room for them in the corner.
+        kept.isEmpty() && showsLive && !started && live.transcript.isBlank() -> AskSpot.Middle
         else -> AskSpot.Corner
     }
     val mood = when {
