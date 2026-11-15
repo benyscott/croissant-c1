@@ -206,7 +206,8 @@ class Core(
             // Straight through, not via the main thread: the page must see "sending" before
             // the service drops the words (Agents.say and Atelier.hear are safe from any thread).
             s.onDictated = { words -> if (atelierWords) atelier.hear(words) else if (agentWords) agents.say(words) }
-            s.canDictate = { atelierWords || (agentWords && agents.canTake) }
+            s.canDictate = { atelierWords || (agentWords && (agents.canTake || brainHold)) }
+            s.routeHold = ::routeToBrain
             s.onDictateRefused = { Cues.play(Sound.ExchangeFailed) }
             s.holdPrompt = { photo, now -> holdPrompt(photo, now) }
             s.holdChat = { holdChat() }
@@ -554,6 +555,7 @@ class Core(
                 if (phase == Phase.Listening && held.dictate && agentWords) agents.holdStarted()
                 // That hold over with no words of its own: the waiting words' window starts again.
                 if (phase == Phase.Idle && lastPhase != Phase.Idle && agentWords) agents.resumeWindow()
+                if (phase == Phase.Idle || phase == Phase.Error) brainHold = false
                 // No server, model or key yet: Ask comes up all the same, to say so and offer what to set.
                 if (held.refused && held.translate == null && !held.dictate) ui.cutToAsk()
                 when {
@@ -1215,6 +1217,32 @@ class Core(
 
     /** A session's page takes a hold's words: read from the service's thread. */
     @Volatile private var agentWords = false
+
+    // ---- the brain (SideBrain) ---------------------------------------------------
+
+    /**
+     * A hold no page takes goes to the brain instead of Ask: Claude Code in the brain's folder,
+     * over the paired bridge, its words with the same grace window as any agent's chat. Within
+     * [BRAIN_WINDOW_MS] of the last words there it continues that session, else a new one.
+     * With no bridge paired, Ask answers as before.
+     */
+    private val brainAgent = "claude"
+    private val brainCwd = "/Users/benjaminscott/Code/sidebrain/agent"
+    private val BRAIN_WINDOW_MS = 5 * 60_000L
+
+    /** The hold starting now was sent to the brain: its chat may still be opening, it takes the words all the same. */
+    @Volatile private var brainHold = false
+
+    /** From the service's thread as a hold begins with nothing to take its words: send it to the brain, or not (false: Ask). */
+    private fun routeToBrain(): Boolean {
+        if (!acpBridge.set || updating || _setup.value.open) return false
+        val session = agents.recentSession(brainAgent, brainCwd, BRAIN_WINDOW_MS)
+        brainHold = true
+        agentWords = true
+        if (session != null) agents.openChat(brainAgent, session, brainCwd) else agents.blank(brainAgent, brainCwd)
+        handler.post { ui.cutToAgentChat(brainAgent, session, brainCwd) }
+        return true
+    }
 
     // ---- Atelier ---------------------------------------------------------------
 

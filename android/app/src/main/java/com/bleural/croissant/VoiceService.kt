@@ -153,6 +153,11 @@ class VoiceService : Service() {
     var canDictate: () -> Boolean = { true }
     /** A hold on that page with nowhere to go: refused, no socket opened. */
     var onDictateRefused: (() -> Unit)? = null
+    /**
+     * Asked as a hold begins, with no page taking its words and no photo or translation: true
+     * when Core sent it to the brain's chat instead (Core.routeToBrain), so it is dictation.
+     */
+    var routeHold: (() -> Boolean)? = null
     /** A hold that asks, a photo hold included: its whole prompt and tools at its time (Core, data/AskPrompt.kt). */
     var holdPrompt: (photo: Boolean, now: OffsetDateTime) -> HoldPrompt? = { _, _ -> null }
     /** The chat model a hold's words go to, made at its press (Core): ready, or why there is none. */
@@ -631,7 +636,7 @@ class VoiceService : Service() {
             beginLocal(translate)
             return
         }
-        val dictate = dictateMode && translate == null
+        val dictate = translate == null && (dictateMode || (photo == null && routeHold?.invoke() == true))
         // A page that takes the words needs somewhere for them now, or the hold is refused before anything is sent.
         if (dictate && !canDictate()) {
             Log.i(TAG, "dictate refused: nothing on the page to take it")

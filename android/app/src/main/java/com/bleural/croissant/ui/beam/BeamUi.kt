@@ -50,6 +50,11 @@ class BeamUi(val variant: String) : UiShell {
         room.cutToAsk()
     }
 
+    override fun cutToAgentChat(agent: String, session: String?, cwd: String) {
+        nav.home()
+        nav.push(if (session != null) Screen.AgentChat(agent, session, cwd) else Screen.AgentNew(agent, cwd), sound = null)
+    }
+
     override fun toggleCamera() {
         if (room.openTarget > 0.5f && room.last == Feature.Camera) {
             room.closePanel()

@@ -174,6 +174,13 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
         _chat.value = AgentChat(agent, "", cwd, opened = true)
     }
 
+    /** The last session prompted in each agent's folder ("agent|cwd") and when, for the brain's session window. */
+    private val lastByFolder = ConcurrentHashMap<String, Pair<String, Long>>()
+
+    /** The session last prompted in [agent]'s [cwd], if that was under [withinMs] ago. */
+    fun recentSession(agent: String, cwd: String, withinMs: Long): String? =
+        lastByFolder["$agent|$cwd"]?.takeIf { System.currentTimeMillis() - it.second < withinMs }?.first
+
     /** Whether a hold here has somewhere to go: an open session, not in the middle of a turn, its words not being typed over. */
     val canTake: Boolean get() = _chat.value?.let { it.opened && !it.running && it.asking == null && !it.editing } == true
 
@@ -238,6 +245,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
                 val session = if (c.blank) client.new(c.agent, c.cwd).also { id ->
                     _chat.update { x -> if (x?.blank == true && x.agent == c.agent && x.cwd == c.cwd) x.copy(session = id) else x }
                 } else c.session
+                lastByFolder["${c.agent}|${c.cwd}"] = session to System.currentTimeMillis()
                 client.prompt(c.agent, session, words)
                 _chat.update { it?.copy(sending = null) }
             } catch (e: IOException) {

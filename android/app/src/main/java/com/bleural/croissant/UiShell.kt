@@ -39,6 +39,9 @@ interface UiShell {
      */
     fun cutToAsk()
 
+    /** A hold that no page takes, sent to the brain: [agent]'s chat in [cwd], its [session] or a new one (null), brought up silently. */
+    fun cutToAgentChat(agent: String, session: String?, cwd: String)
+
     /** The double press: the camera, opened from anywhere, and closed again if it is up. */
     fun toggleCamera()
 
