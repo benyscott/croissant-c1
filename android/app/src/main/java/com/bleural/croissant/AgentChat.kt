@@ -17,7 +17,9 @@ data class Asking(val request: String, val title: String, val options: List<AskO
 /**
  * An open session's conversation, built from the bridge's log of it (acp-bridge/acp_bridge/
  * server.py): every update in seq order, one already heard skipped ([with]). [sending] and
- * [unsent] are a hold's words on their way, or that did not get there.
+ * [unsent] are a hold's words on their way, or that did not get there. [pending] are a hold's
+ * words in their grace window, not sent yet: cancelled, nothing of them reaches the agent;
+ * [editing] while they are being typed over, the window stopped.
  */
 data class AgentChat(
     val agent: String,
@@ -34,6 +36,8 @@ data class AgentChat(
     val opened: Boolean = false,
     val sending: String? = null,
     val unsent: String? = null,
+    val pending: String? = null,
+    val editing: Boolean = false,
 ) {
     val key get() = "$agent/$session"
 

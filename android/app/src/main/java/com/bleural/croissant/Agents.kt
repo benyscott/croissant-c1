@@ -117,6 +117,8 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     fun openChat(agent: String?, session: String?, cwd: String?) {
         val key = if (agent != null && session != null) "$agent/$session" else null
         if (key == _chat.value?.key && (key == null || _chat.value?.opened == true)) return
+        // Words left in their grace window go nowhere: they were for the page being left.
+        cancelPending()
         _chat.value?.let { if (!it.blank) chats[it.key] = it }
         opening?.cancel()
         if (key == null || cwd == null) { _chat.value = null; return }
@@ -150,7 +152,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
         val key = "${e.optString("agent")}/${e.optString("sessionId")}"
         // The bridge restarted since this was heard: what it held is gone, its log follows anew.
         if (e.optString("event") == "reset") {
-            _chat.update { c -> if (c?.key == key) AgentChat(c.agent, c.session, c.cwd, epoch = e.optString("epoch").ifEmpty { null }, sending = c.sending, unsent = c.unsent) else c }
+            _chat.update { c -> if (c?.key == key) AgentChat(c.agent, c.session, c.cwd, epoch = e.optString("epoch").ifEmpty { null }, sending = c.sending, unsent = c.unsent, pending = c.pending, editing = c.editing) else c }
             chats.remove(key)
             return
         }
@@ -166,16 +168,69 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     /** A new chat of [agent] in [cwd] on its page, blank until a hold: [say] makes the session. */
     fun blank(agent: String, cwd: String) {
         if (_chat.value?.let { it.blank && it.agent == agent && it.cwd == cwd } == true) return
+        cancelPending()
         _chat.value?.let { if (!it.blank) chats[it.key] = it }
         opening?.cancel()
         _chat.value = AgentChat(agent, "", cwd, opened = true)
     }
 
-    /** Whether a hold here has somewhere to go: an open session, not in the middle of a turn. */
-    val canTake: Boolean get() = _chat.value?.let { it.opened && !it.running && it.asking == null } == true
+    /** Whether a hold here has somewhere to go: an open session, not in the middle of a turn, its words not being typed over. */
+    val canTake: Boolean get() = _chat.value?.let { it.opened && !it.running && it.asking == null && !it.editing } == true
 
-    /** A hold's words, from the service's thread: the open session's next prompt, a blank chat's first (its session made first). */
+    /** The grace window after a hold, in ms: its words wait this long, to be cancelled or edited, before they are sent. 0 sends at once. */
+    @Volatile var sendDelayMs = 1_500L
+    private var waiting: Job? = null
+
+    /**
+     * A hold's words, from the service's thread. They wait [sendDelayMs] as [AgentChat.pending]
+     * before they go ([send]); a hold in that window adds to them and starts it again.
+     */
     fun say(words: String) {
+        if (_chat.value == null) return
+        if (sendDelayMs <= 0) return send(words)
+        val all = _chat.value?.pending?.let { "$it $words" } ?: words
+        _chat.update { it?.copy(pending = all, unsent = null) }
+        waiting?.cancel()
+        waiting = scope.launch {
+            delay(sendDelayMs)
+            val p = _chat.value?.takeIf { !it.editing }?.pending ?: return@launch
+            _chat.update { it?.copy(pending = null) }
+            send(p)
+        }
+    }
+
+    /** A hold began on the page: words in their grace window wait for its words to join them ([say] starts the window again). */
+    fun holdStarted() { waiting?.cancel() }
+
+    /** Words still waiting with no window running (the hold over them brought nothing): start it again. */
+    fun resumeWindow() {
+        val p = _chat.value?.takeIf { !it.editing }?.pending ?: return
+        if (waiting?.isActive == true) return
+        _chat.update { it?.copy(pending = null) }
+        say(p)
+    }
+
+    /** Drop the words in their grace window: nothing of them reaches the agent. */
+    fun cancelPending() {
+        waiting?.cancel()
+        _chat.update { it?.copy(pending = null, editing = false) }
+    }
+
+    /** Stop the grace window to type over the words; [sendEdited] or [cancelPending] ends it. */
+    fun editPending() {
+        waiting?.cancel()
+        _chat.update { if (it?.pending != null) it.copy(editing = true) else it }
+    }
+
+    /** The words as typed over, sent now; blank, nothing is sent. */
+    fun sendEdited(words: String) {
+        waiting?.cancel()
+        _chat.update { it?.copy(pending = null, editing = false) }
+        if (words.isNotBlank()) send(words.trim())
+    }
+
+    /** [words] as the open session's next prompt, a blank chat's first (its session made first). */
+    private fun send(words: String) {
         val c = _chat.value ?: return
         _chat.update { it?.copy(sending = words, unsent = null) }
         scope.launch {
@@ -192,7 +247,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     }
 
     /** Send the words that did not get there again. */
-    fun retry() { _chat.value?.unsent?.let(::say) }
+    fun retry() { _chat.value?.unsent?.let(::send) }
 
     /** Stop the open session's turn. */
     fun stop() {

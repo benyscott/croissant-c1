@@ -84,14 +84,15 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
     PageTop(name, r) {
         Column(Modifier.fillMaxSize().elasticPull(pull, INK, GROUND).verticalScroll(scroll)) {
             Spacer(Modifier.height(8.px))
-            val held = Held.of(voice, c?.sending, c?.unsent)
+            val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true)
             if (held == null) {
                 Box(Modifier.padding(start = 16.px, end = 16.px).fillMaxWidth().height(152.px)
                     .border(3.px, r.hue, RoundedCornerShape(16.px))) {
                     Text("hold to start a chat in $folder", style = BeamType.Body, color = SUB,
                         modifier = Modifier.padding(start = 20.px, end = 28.px).wordsAt(50f))
                 }
-            } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer")
+            } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer",
+                windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited)
             Spacer(Modifier.height(40.px))
         }
         TopFade(r, scroll)
@@ -118,7 +119,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     val list = rememberLazyListState()
     val pull = rememberPull(nav::pop)
     LazyWheel(list, pull, 96f)
-    val held = Held.of(voice, c?.sending, c?.unsent)
+    val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true)
     val r = agentLook(agent).ramp
     val scope = rememberCoroutineScope()
     val far = with(LocalDensity.current) { FAR.px.toPx() }
@@ -182,7 +183,8 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                             }
                         }
                         if (held != null) {
-                            HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer")
+                            HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer",
+                windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited)
                             Spacer(Modifier.height(16.px))
                         }
                         // Room for the folder key at the foot, so the last line is never under it.

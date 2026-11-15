@@ -550,6 +550,10 @@ class Core(
                 val held = s.state.value
                 // Nor on a page that takes a hold's words (an Atelier app, an agent's conversation).
                 if (phase == Phase.Listening && !held.withPhoto && held.translate == null && !held.dictate) ui.cutToAsk()
+                // A hold on an agent's page while words wait to be sent: the window waits for it, its words join them.
+                if (phase == Phase.Listening && held.dictate && agentWords) agents.holdStarted()
+                // That hold over with no words of its own: the waiting words' window starts again.
+                if (phase == Phase.Idle && lastPhase != Phase.Idle && agentWords) agents.resumeWindow()
                 // No server, model or key yet: Ask comes up all the same, to say so and offer what to set.
                 if (held.refused && held.translate == null && !held.dictate) ui.cutToAsk()
                 when {
