@@ -286,7 +286,7 @@ class Bridge:
         if not cwd and not s:
             raise Refused("which folder is it in")
         if not s:
-            s = self.sessions[(agent_id, session_id)] = Session(agent_id, session_id, cwd)
+            s = self.sessions[(agent_id, session_id)] = Session(agent_id, session_id, str(Path(cwd).expanduser().resolve()))
         async with s.opening:
             if s.running or s.waiting or (s.loaded and not s.log):  # live here, or new and empty
                 return s

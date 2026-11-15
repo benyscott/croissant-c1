@@ -1227,7 +1227,7 @@ class Core(
      * With no bridge paired, Ask answers as before.
      */
     private val brainAgent = "claude"
-    private val brainCwd = "/Users/benjaminscott/Code/sidebrain/agent"
+    private val brainCwd = "~/Code/sidebrain/agent"  // the bridge expands ~ on its own computer
     private val BRAIN_WINDOW_MS = 5 * 60_000L
 
     /** The hold starting now was sent to the brain: its chat may still be opening, it takes the words all the same. */
