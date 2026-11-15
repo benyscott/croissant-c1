@@ -38,6 +38,9 @@ data class AgentChat(
     val unsent: String? = null,
     val pending: String? = null,
     val editing: Boolean = false,
+    /** Tapped (edit) or cancelled after the release, before the words were settled: done to them as they land. */
+    val editSoon: Boolean = false,
+    val cancelSoon: Boolean = false,
 ) {
     val key get() = "$agent/$session"
 

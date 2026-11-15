@@ -52,7 +52,7 @@ private const val IN_END = 28f
 /** What a hold on a page that takes its words (an agent's session, AgentChat.kt) is doing: heard (still talking, or settling), sending, refused where it went, or failed before it got there. */
 internal sealed interface Held {
     val words: String
-    data class Heard(override val words: String, val talking: Boolean) : Held
+    data class Heard(override val words: String, val talking: Boolean, val editSoon: Boolean = false) : Held
     data class Sending(override val words: String) : Held
     data class Unsent(override val words: String) : Held
     data class Failed(override val words: String) : Held
@@ -62,9 +62,11 @@ internal sealed interface Held {
     data class Editing(override val words: String) : Held
 
     companion object {
-        fun of(voice: VoiceState, sending: String?, unsent: String?, pending: String? = null, editing: Boolean = false): Held? = when {
+        fun of(voice: VoiceState, sending: String?, unsent: String?, pending: String? = null, editing: Boolean = false, editSoon: Boolean = false, cancelSoon: Boolean = false): Held? = when {
             voice.dictate && voice.phase == Phase.Error -> Failed(voice.error ?: "the hold did not get through")
-            voice.dictate && voice.phase != Phase.Idle -> Heard(listOfNotNull(pending, voice.transcript.ifBlank { null }).joinToString(" "), voice.phase == Phase.Listening)
+            // Cancelled while settling: the card goes now, its words dropped as they land.
+            voice.dictate && voice.phase != Phase.Idle && cancelSoon -> null
+            voice.dictate && voice.phase != Phase.Idle -> Heard(listOfNotNull(pending, voice.transcript.ifBlank { null }).joinToString(" "), voice.phase == Phase.Listening, editSoon)
             pending != null && editing -> Editing(pending)
             pending != null -> Pending(pending)
             sending != null -> Sending(sending)
@@ -83,6 +85,7 @@ internal sealed interface Held {
 internal fun HeldCard(
     held: Held, hue: Color, level: () -> Float, onRetry: () -> Unit, away: String,
     windowMs: Long = 1_500L, onCancel: () -> Unit = {}, onEdit: () -> Unit = {}, onSendEdited: (String) -> Unit = {},
+    onEditSoon: () -> Unit = {}, onCancelSoon: () -> Unit = {},
 ) {
     if (held is Held.Pending) return PendingCard(held.words, hue, windowMs, onCancel, onEdit)
     if (held is Held.Editing) return EditingCard(held.words, hue, onCancel, onSendEdited)
@@ -103,13 +106,20 @@ internal fun HeldCard(
         Column(Modifier.fillMaxWidth()) {
             val words = Modifier.padding(start = IN_START.px, end = IN_END.px).wordsAt(50f)
             when (held) {
-                is Held.Heard -> if (held.talking) CaretWords(held.words, ink, hue, words) else Text(held.words, style = BeamType.Body, color = ink, modifier = words)
+                // Let go and settling: a tap on the words already asks for the editor (the caret shows it), cancel already drops them.
+                is Held.Heard -> if (held.talking || held.editSoon) CaretWords(held.words, ink, hue, words)
+                    else Text(held.words, style = BeamType.Body, color = ink, modifier = Modifier.clickable(remember { MutableInteractionSource() }, indication = null) {
+                        Cues.play(Sound.FieldFocus); onEditSoon()
+                    }.then(words))
                 is Held.Failed -> Text(held.words, style = BeamType.Body, color = ink, modifier = words)
                 else -> Text(held.words, style = BeamType.Body, color = ink, modifier = words)
             }
             when (held) {
                 is Held.Heard -> Box(Modifier.fillMaxWidth().height(98.px)) {
                     if (held.talking) CardLevel(level, hue, Modifier.padding(top = 26.px))
+                    else Pill("cancel", DANGER, GROUND, Modifier.align(Alignment.TopEnd).padding(top = 30.px, end = 20.px)) {
+                        Cues.play(Sound.Destroy); onCancelSoon()
+                    }
                 }
                 // Sending is the message card it is about to become, the dots where the step
                 // line's are: when the answer comes only the line beside them changes.

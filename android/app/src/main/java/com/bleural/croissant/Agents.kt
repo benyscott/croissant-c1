@@ -193,9 +193,11 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
      * before they go ([send]); a hold in that window adds to them and starts it again.
      */
     fun say(words: String) {
-        if (_chat.value == null) return
-        if (sendDelayMs <= 0) return send(words)
-        val all = _chat.value?.pending?.let { "$it $words" } ?: words
+        val c = _chat.value ?: return
+        val all = c.pending?.let { "$it $words" } ?: words
+        if (c.cancelSoon) { _chat.update { it?.copy(pending = null, cancelSoon = false, editSoon = false) }; return }
+        if (c.editSoon) { _chat.update { it?.copy(pending = all, editing = true, editSoon = false, unsent = null) }; return }
+        if (sendDelayMs <= 0) return send(all)
         _chat.update { it?.copy(pending = all, unsent = null) }
         waiting?.cancel()
         waiting = scope.launch {
@@ -207,7 +209,16 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     }
 
     /** A hold began on the page: words in their grace window wait for its words to join them ([say] starts the window again). */
-    fun holdStarted() { waiting?.cancel() }
+    fun holdStarted() {
+        waiting?.cancel()
+        _chat.update { it?.copy(editSoon = false, cancelSoon = false) }
+    }
+
+    /** Edit asked for after the release, before the words are settled: they land in the editor. */
+    fun editSoon() { _chat.update { it?.copy(editSoon = true, cancelSoon = false) } }
+
+    /** Cancelled after the release, before the words are settled: they are dropped as they land. */
+    fun cancelSoon() { _chat.update { it?.copy(cancelSoon = true, editSoon = false) } }
 
     /** Words still waiting with no window running (the hold over them brought nothing): start it again. */
     fun resumeWindow() {
