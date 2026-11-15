@@ -185,7 +185,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     val canTake: Boolean get() = _chat.value?.let { it.opened && !it.running && it.asking == null && !it.editing } == true
 
     /** The grace window after a hold, in ms: its words wait this long, to be cancelled or edited, before they are sent. 0 sends at once. */
-    @Volatile var sendDelayMs = 1_500L
+    @Volatile var sendDelayMs = 2_000L
     private var waiting: Job? = null
 
     /**
@@ -239,6 +239,14 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
     fun editPending() {
         waiting?.cancel()
         _chat.update { if (it?.pending != null) it.copy(editing = true) else it }
+    }
+
+    /** The words waiting, sent now without the rest of their window. */
+    fun sendNow() {
+        waiting?.cancel()
+        val p = _chat.value?.pending ?: return
+        _chat.update { it?.copy(pending = null, editing = false) }
+        send(p)
     }
 
     /** The words as typed over, sent now; blank, nothing is sent. */

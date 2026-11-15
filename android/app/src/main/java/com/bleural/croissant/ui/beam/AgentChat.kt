@@ -4,6 +4,7 @@ import androidx.compose.foundation.border
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.derivedStateOf
@@ -81,6 +82,10 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
     val folder = cwd.trimEnd('/').substringAfterLast('/').ifEmpty { cwd }
     val r = agentLook(agent).ramp
     val (scroll, pull) = rememberWordsScroll(nav::pop)
+    val heldNew = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true)
+    // The new chat's card grows as you talk: its bottom, with the newest words, stays in view.
+    LaunchedEffect(heldNew) { scroll.animateScrollTo(scroll.maxValue) }
+    Box(Modifier.fillMaxSize()) {
     PageTop(name, r) {
         Column(Modifier.fillMaxSize().elasticPull(pull, INK, GROUND).verticalScroll(scroll)) {
             Spacer(Modifier.height(8.px))
@@ -97,6 +102,9 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
             Spacer(Modifier.height(40.px))
         }
         TopFade(r, scroll)
+    }
+    if (heldNew is Held.Pending) SendingSheet(heldNew.words, r.hue, core.agents.sendDelayMs,
+        onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSend = core.agents::sendNow)
     }
 }
 
@@ -160,8 +168,13 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     }
     LaunchedEffect(c?.items?.size, (c?.items?.lastOrNull() as? ChatItem.Said)?.words?.length, c?.running, c?.asking, held) {
         if (!revealed || !stick) return@LaunchedEffect
+        // To the foot's bottom, not its top: a hold's card grows as you talk, and its newest words are at its bottom.
         withFrameNanos { }
-        list.animateScrollToItem(foot(list))
+        val f = foot(list)
+        if (list.layoutInfo.visibleItemsInfo.none { it.index == f }) list.animateScrollToItem(f)
+        withFrameNanos { }
+        val b = below
+        if (b > 0f && b != Float.MAX_VALUE) list.animateScrollBy(b)
     }
     Box(Modifier.fillMaxSize()) {
         PageTop(name, r) {
@@ -216,6 +229,8 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                 QuietKey(Glyphs.Folder, r, onClick = { nav.push(Screen.AgentFiles(agent, c.cwd)) })
             }
         }
+        if (held is Held.Pending) SendingSheet(held.words, r.hue, core.agents.sendDelayMs,
+            onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSend = core.agents::sendNow)
         // The header word, tapped: back up to the first line, as a phone's clock does.
         Box(Modifier.fillMaxWidth().height(CONTENT_TOP.px).tappable { if (revealed) scope.launch { list.animateScrollToItem(0) } })
     }
