@@ -98,13 +98,11 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
                 }
             } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer",
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
-                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon)
+                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
             Spacer(Modifier.height(40.px))
         }
         TopFade(r, scroll)
     }
-    if (heldNew is Held.Pending) SendingSheet(heldNew.words, r.hue, core.agents.sendDelayMs,
-        onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSend = core.agents::sendNow)
     }
 }
 
@@ -199,7 +197,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                         if (held != null) {
                             HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer",
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
-                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon)
+                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
                             Spacer(Modifier.height(16.px))
                         }
                         // Room for the folder key at the foot, so the last line is never under it.
@@ -229,8 +227,6 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                 QuietKey(Glyphs.Folder, r, onClick = { nav.push(Screen.AgentFiles(agent, c.cwd)) })
             }
         }
-        if (held is Held.Pending) SendingSheet(held.words, r.hue, core.agents.sendDelayMs,
-            onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSend = core.agents::sendNow)
         // The header word, tapped: back up to the first line, as a phone's clock does.
         Box(Modifier.fillMaxWidth().height(CONTENT_TOP.px).tappable { if (revealed) scope.launch { list.animateScrollToItem(0) } })
     }

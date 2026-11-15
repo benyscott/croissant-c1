@@ -86,9 +86,9 @@ internal sealed interface Held {
 internal fun HeldCard(
     held: Held, hue: Color, level: () -> Float, onRetry: () -> Unit, away: String,
     windowMs: Long = 2_000L, onCancel: () -> Unit = {}, onEdit: () -> Unit = {}, onSendEdited: (String) -> Unit = {},
-    onEditSoon: () -> Unit = {}, onCancelSoon: () -> Unit = {},
+    onEditSoon: () -> Unit = {}, onCancelSoon: () -> Unit = {}, onSendNow: () -> Unit = {},
 ) {
-    if (held is Held.Pending) return PendingCard(held.words, hue, windowMs, onCancel, onEdit)
+    if (held is Held.Pending) return PendingCard(held.words, hue, windowMs, onCancel, onEdit, onSendNow)
     if (held is Held.Editing) return EditingCard(held.words, hue, onCancel, onSendEdited)
     val fill = when (held) {
         is Held.Heard -> GROUND
@@ -182,7 +182,9 @@ internal fun Message(words: String, fill: Color) {
  * words stops the window to edit them ([onEdit]); cancel drops them ([onCancel]).
  */
 @Composable
-private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () -> Unit, onEdit: () -> Unit) {
+private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () -> Unit, onEdit: () -> Unit, onSend: () -> Unit) {
+    val left = remember(words) { Animatable(1f) }
+    LaunchedEffect(words) { left.animateTo(0f, tween(windowMs.toInt().coerceAtLeast(1), easing = LinearEasing)) }
     val tap = remember { MutableInteractionSource() }
     Box(Modifier.padding(start = CARD_X.px, end = CARD_X.px).fillMaxWidth()
         .clip(RoundedCornerShape(16.px)).background(GROUND).border(3.px, hue, RoundedCornerShape(16.px))) {
@@ -191,6 +193,25 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
                 modifier = Modifier.clickable(tap, indication = null) { Cues.play(Sound.FieldFocus); onEdit() }
                     .padding(start = IN_START.px, end = IN_END.px).wordsAt(50f))
             Spacer(Modifier.height(22.px))
+        }
+    }
+    // Under the card, never over it: the bar draining until they go, then small edit and cancel
+    // side by side (cancel is rarely wanted, so it is not the big one), and send now, big.
+    Column(Modifier.padding(start = CARD_X.px + 4.px, end = CARD_X.px + 4.px, top = 18.px).fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().height(8.px).clip(RoundedCornerShape(4.px)).background(hue.copy(alpha = 0.25f))) {
+            Box(Modifier.fillMaxWidth(left.value).height(8.px).clip(RoundedCornerShape(4.px)).background(hue))
+        }
+        Spacer(Modifier.height(20.px))
+        Row(Modifier.fillMaxWidth()) {
+            Pill("edit", GROUND, INK, Modifier.border(2.px, INK, RoundedCornerShape(23.px))) { Cues.play(Sound.FieldFocus); onEdit() }
+            Spacer(Modifier.padding(start = 12.px))
+            Pill("cancel", GROUND, DANGER, Modifier.border(2.px, DANGER, RoundedCornerShape(23.px))) { Cues.play(Sound.Destroy); onCancel() }
+            Spacer(Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(16.px))
+        Box(Modifier.fillMaxWidth().height(64.px).clip(RoundedCornerShape(32.px)).background(hue)
+            .clickable(remember { MutableInteractionSource() }, indication = null) { Cues.play(Sound.Commit); onSend() }) {
+            Text("send now", style = PILL, color = GROUND, modifier = Modifier.align(Alignment.Center))
         }
     }
 }
@@ -211,39 +232,6 @@ private fun EditingCard(words: String, hue: Color, onCancel: () -> Unit, onSend:
                 Pill("cancel", DANGER, GROUND) { Cues.play(Sound.Destroy); onCancel() }
                 Spacer(Modifier.padding(start = 12.px))
                 Pill("send", hue, GROUND) { Cues.play(Sound.Commit); onSend(state.text.toString()) }
-            }
-        }
-    }
-}
-
-/**
- * Over the whole page while a hold's words wait out their window: the page dimmed, and in the
- * middle a card ringed in [hue], "sending", a bar draining over [windowMs], and under it cancel
- * (the big one), edit and send now. The words on the page still take a tap to edit.
- */
-@Composable
-internal fun SendingSheet(words: String, hue: Color, windowMs: Long, onCancel: () -> Unit, onEdit: () -> Unit, onSend: () -> Unit) {
-    val left = remember(words) { Animatable(1f) }
-    LaunchedEffect(words) { left.animateTo(0f, tween(windowMs.toInt().coerceAtLeast(1), easing = LinearEasing)) }
-    Box(Modifier.fillMaxSize().background(GROUND.copy(alpha = 0.6f)).clickable(remember { MutableInteractionSource() }, indication = null) {}) {
-        Column(Modifier.align(Alignment.Center).padding(start = 24.px, end = 24.px).fillMaxWidth()
-            .clip(RoundedCornerShape(20.px)).background(GROUND).border(3.px, hue, RoundedCornerShape(20.px))
-            .padding(start = 24.px, end = 24.px, bottom = 24.px)) {
-            Text("sending", style = BeamType.Body, color = INK, modifier = Modifier.wordsAt(50f))
-            Spacer(Modifier.height(20.px))
-            Box(Modifier.fillMaxWidth().height(8.px).clip(RoundedCornerShape(4.px)).background(hue.copy(alpha = 0.25f))) {
-                Box(Modifier.fillMaxWidth(left.value).height(8.px).clip(RoundedCornerShape(4.px)).background(hue))
-            }
-            Spacer(Modifier.height(28.px))
-            Box(Modifier.fillMaxWidth().height(64.px).clip(RoundedCornerShape(32.px)).background(DANGER)
-                .clickable(remember { MutableInteractionSource() }, indication = null) { Cues.play(Sound.Destroy); onCancel() }) {
-                Text("cancel", style = PILL, color = GROUND, modifier = Modifier.align(Alignment.Center))
-            }
-            Spacer(Modifier.height(16.px))
-            Row(Modifier.fillMaxWidth()) {
-                Pill("edit", GROUND, INK, Modifier.border(2.px, INK, RoundedCornerShape(23.px))) { Cues.play(Sound.FieldFocus); onEdit() }
-                Spacer(Modifier.weight(1f))
-                Pill("send now", hue, GROUND) { Cues.play(Sound.Commit); onSend() }
             }
         }
     }
