@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.text.input.clearText
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
@@ -82,10 +83,12 @@ internal sealed interface Held {
     data class Editing(override val words: String) : Held
 
     companion object {
-        fun of(voice: VoiceState, sending: String?, unsent: String?, pending: String? = null, editing: Boolean = false, editSoon: Boolean = false, cancelSoon: Boolean = false): Held? = when {
+        fun of(voice: VoiceState, sending: String?, unsent: String?, pending: String? = null, editing: Boolean = false, editSoon: Boolean = false, cancelSoon: Boolean = false, typing: Boolean = false): Held? = when {
             // Being edited: the editor stays up through a hold, whose words go in at its cursor.
             pending != null && editing -> Editing(pending)
             voice.dictate && voice.phase == Phase.Error -> Failed(voice.error ?: "the hold did not get through")
+            // The text box open: no card, the box stays up and its words go in at its cursor.
+            typing && pending == null && voice.dictate && voice.phase != Phase.Idle -> null
             // Cancelled while settling: the card goes now, its words dropped as they land.
             voice.dictate && voice.phase != Phase.Idle && cancelSoon -> null
             voice.dictate && voice.phase != Phase.Idle -> Heard(listOfNotNull(pending, voice.transcript.ifBlank { null }).joinToString(" "), voice.phase == Phase.Listening, editSoon)
@@ -105,13 +108,12 @@ internal sealed interface Held {
 @Composable
 internal fun HeldCard(
     held: Held, hue: Color, level: () -> Float, onRetry: () -> Unit, away: String,
-    inserts: kotlinx.coroutines.flow.Flow<String> = kotlinx.coroutines.flow.emptyFlow(),
+    inserts: kotlinx.coroutines.flow.Flow<String> = kotlinx.coroutines.flow.emptyFlow(), live: String = "",
     windowMs: Long = 2_000L, onCancel: () -> Unit = {}, onEdit: () -> Unit = {}, onSendEdited: (String) -> Unit = {},
     onEditSoon: () -> Unit = {}, onCancelSoon: () -> Unit = {}, onSendNow: () -> Unit = {},
-    onEditedByVoice: (String) -> Unit = {},
 ) {
     if (held is Held.Pending) return PendingCard(held.words, hue, windowMs, onCancel, onEdit, onSendNow)
-    if (held is Held.Editing) return EditingCard(held.words, hue, inserts, onCancel, onSendEdited, onEditedByVoice)
+    if (held is Held.Editing) return EditingCard(held.words, hue, inserts, live, onCancel, onSendEdited)
     val fill = when (held) {
         is Held.Heard -> GROUND
         is Held.Sending -> hue
@@ -240,12 +242,18 @@ private fun CopiedLine(copied: Boolean, ink: Color) {
  * running); the keys' done only puts them away. [state] is the page's, so the words stay.
  */
 @Composable
-internal fun BoxScope.TypeBox(state: TextFieldState, hue: Color, canSend: Boolean, besideKey: Boolean, onSend: (String) -> Unit) {
+internal fun BoxScope.TypeBox(
+    state: TextFieldState, hue: Color, canSend: Boolean, besideKey: Boolean, onSend: (String) -> Unit,
+    inserts: kotlinx.coroutines.flow.Flow<String> = kotlinx.coroutines.flow.emptyFlow(), live: String = "", onTyping: (Boolean) -> Unit = {},
+) {
     val keys = LocalSoftwareKeyboardController.current
     val r = remember(hue) { ramp(hue) }
     var open by remember { mutableStateOf(false) }
     val requester = remember { FocusRequester() }
     val ready = canSend && state.text.isNotBlank()
+    // Open, a hold writes here: its words at the cursor (over the selection), nothing sent.
+    LaunchedEffect(open) { if (open) inserts.collect { putAtCursor(state, it) } }
+    DisposableEffect(Unit) { onDispose { onTyping(false) } }
     fun send() {
         if (!ready) return
         Cues.play(Sound.Commit)
@@ -274,7 +282,9 @@ internal fun BoxScope.TypeBox(state: TextFieldState, hue: Color, canSend: Boolea
                     modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged {
                         if (it.isFocused && !open) Cues.play(Sound.FieldFocus)
                         open = it.isFocused
+                        onTyping(it.isFocused)
                     },
+                    outputTransformation = liveAtCursor(live),
                 )
             }
         }
@@ -321,24 +331,16 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
 
 /** A hold's words typed over on the keys, the grace window stopped: send them as they are now, or cancel. */
 @Composable
-private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.flow.Flow<String>, onCancel: () -> Unit, onSend: (String) -> Unit, onEditedByVoice: (String) -> Unit) {
+private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.flow.Flow<String>, live: String, onCancel: () -> Unit, onSend: (String) -> Unit) {
     val keys = LocalSoftwareKeyboardController.current
     val state = remember { TextFieldState(words) }
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { requester.requestFocus() }
     // A hold while editing: its words go in where the cursor is (over the selection), spaced from
-    // what is either side; then, as after any hold, the whole goes back to the grace window.
+    // what is either side. The editor stays up: send or cancel are the user's.
     LaunchedEffect(Unit) {
         inserts.collect { said ->
-            state.edit {
-                val at = selection.min
-                val before = if (at > 0 && !asCharSequence()[at - 1].isWhitespace()) " " else ""
-                val after = if (selection.max < length && !asCharSequence()[selection.max].isWhitespace()) " " else ""
-                val put = before + said.trim() + after
-                replace(at, selection.max, put)
-                selection = androidx.compose.ui.text.TextRange(at + put.length - after.length)
-            }
-            onEditedByVoice(state.text.toString())
+            putAtCursor(state, said)
         }
     }
     val r = remember(hue) { ramp(hue) }
@@ -352,6 +354,7 @@ private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.f
                 textStyle = BeamType.Body.copy(color = INK),
                 cursorBrush = SolidColor(hue),
                 inputTransformation = InputTransformation.maxLength(2_000),
+                outputTransformation = liveAtCursor(live),
                 // Done, not send, as in the text box: the keys go away, send is the card's own.
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { keys?.hide() }),
@@ -364,6 +367,38 @@ private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.f
                 Spacer(Modifier.padding(start = 12.px))
                 Pill("send", hue, GROUND) { Cues.play(Sound.Commit); onSend(state.text.toString()) }
             }
+        }
+    }
+}
+
+/** A hold's words as they come, while it is held or settling; empty otherwise. */
+internal fun liveWords(voice: VoiceState): String =
+    if (voice.dictate && voice.phase != Phase.Idle && voice.phase != Phase.Error) voice.transcript.trim() else ""
+
+/** [said] put in at [state]'s cursor (over its selection), spaced from what is either side; the cursor after it. */
+private fun putAtCursor(state: TextFieldState, said: String) {
+    state.edit {
+        val (at, end, put) = spaced(asCharSequence(), selection.min, selection.max, said)
+        replace(at, end, put)
+        selection = androidx.compose.ui.text.TextRange(at + put.trimEnd().length)
+    }
+}
+
+/** Where [said] goes in [text] over [at]..[end], with a space either side where the words touch. */
+private fun spaced(text: CharSequence, at: Int, end: Int, said: String): Triple<Int, Int, String> {
+    val before = if (at > 0 && !text[at - 1].isWhitespace()) " " else ""
+    val after = if (end < text.length && !text[end].isWhitespace()) " " else ""
+    return Triple(at, end, before + said.trim() + after)
+}
+
+/** A hold's [live] words shown at the cursor as they come, not yet in the text: they go in when they settle. */
+@Composable
+private fun liveAtCursor(live: String): androidx.compose.foundation.text.input.OutputTransformation? {
+    if (live.isEmpty()) return null
+    return remember(live) {
+        androidx.compose.foundation.text.input.OutputTransformation {
+            val (at, end, put) = spaced(asCharSequence(), selection.min, selection.max, live)
+            replace(at, end, put)
         }
     }
 }

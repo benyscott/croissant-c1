@@ -73,6 +73,7 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
     val ui by core.agents.state.collectAsStateWithLifecycle()
     val chat by core.agents.chat.collectAsStateWithLifecycle()
     val voice by core.voice.collectAsStateWithLifecycle()
+    val typing by core.agents.typing.collectAsStateWithLifecycle()
     val c = chat?.takeIf { it.agent == agent && it.cwd == cwd }
     val became = c?.session?.takeIf { it.isNotEmpty() }
     LaunchedEffect(became) {
@@ -84,27 +85,28 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
     val r = agentLook(agent).ramp
     val (scroll, pull) = rememberWordsScroll(nav::pop)
     val typed = remember(cwd) { TextFieldState() }
-    val heldNew = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true)
+    val heldNew = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true, typing)
     // The new chat's card grows as you talk: its bottom, with the newest words, stays in view.
     LaunchedEffect(heldNew) { scroll.animateScrollTo(scroll.maxValue) }
     Box(Modifier.fillMaxSize()) {
     PageTop(name, r) {
         Column(Modifier.fillMaxSize().elasticPull(pull, INK, GROUND).verticalScroll(scroll)) {
             Spacer(Modifier.height(8.px))
-            val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true)
+            val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true, typing)
             if (held == null) {
                 Box(Modifier.padding(start = 16.px, end = 16.px).fillMaxWidth().height(152.px)
                     .border(3.px, r.hue, RoundedCornerShape(16.px))) {
                     Text("hold to start a chat in $folder", style = BeamType.Body, color = SUB,
                         modifier = Modifier.padding(start = 20.px, end = 28.px).wordsAt(50f))
                 }
-            } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts,
+            } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts, live = liveWords(voice),
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
-                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow, onEditedByVoice = core.agents::editedByVoice)
+                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
             Spacer(Modifier.height(40.px))
         }
         TopFade(r, scroll)
-        if (heldNew == null && c?.opened == true) TypeBox(typed, r.hue, canSend = true, besideKey = false, onSend = core.agents::sendEdited)
+        if (heldNew == null && c?.opened == true) TypeBox(typed, r.hue, canSend = true, besideKey = false, onSend = core.agents::sendEdited,
+            inserts = core.agents.inserts, live = liveWords(voice), onTyping = { core.agents.typing.value = it })
     }
     }
 }
@@ -122,6 +124,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     val ui by core.agents.state.collectAsStateWithLifecycle()
     val chat by core.agents.chat.collectAsStateWithLifecycle()
     val voice by core.voice.collectAsStateWithLifecycle()
+    val typing by core.agents.typing.collectAsStateWithLifecycle()
     val c = chat?.takeIf { it.agent == agent && it.session == session }
     val name = ui.agents.firstOrNull { it.id == agent }?.name ?: agent
     // Lazy, so a long session draws only what is in view: the wheel scrolls 96 a tick, up at
@@ -129,7 +132,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     val list = rememberLazyListState()
     val pull = rememberPull(nav::pop)
     LazyWheel(list, pull, 96f)
-    val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true)
+    val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true, typing)
     val r = agentLook(agent).ramp
     // The text box's words (TypeBox), kept while a turn runs or a hold's card is up.
     val typed = remember(session) { TextFieldState() }
@@ -200,9 +203,9 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                             }
                         }
                         if (held != null) {
-                            HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts,
+                            HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts, live = liveWords(voice),
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
-                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow, onEditedByVoice = core.agents::editedByVoice)
+                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
                             Spacer(Modifier.height(16.px))
                         }
                         // Room for the folder key at the foot, so the last line is never under it.
@@ -231,7 +234,8 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                 Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.px, bottom = 24.px).size(84.px).drawBehind { drawCircle(GROUND) })
                 QuietKey(Glyphs.Folder, r, onClick = { nav.push(Screen.AgentFiles(agent, c.cwd)) })
                 // Left of the folder key, over it once tapped open (HeldCard.kt).
-                if (held == null && c.opened) TypeBox(typed, r.hue, canSend = !c.running && c.asking == null, besideKey = true, onSend = core.agents::sendEdited)
+                if (held == null && c.opened) TypeBox(typed, r.hue, canSend = !c.running && c.asking == null, besideKey = true, onSend = core.agents::sendEdited,
+            inserts = core.agents.inserts, live = liveWords(voice), onTyping = { core.agents.typing.value = it })
             }
         }
         // The header word, tapped: back up to the first line, as a phone's clock does.

@@ -190,11 +190,14 @@ class Agents(
         lastByFolder["$agent|$cwd"]?.takeIf { System.currentTimeMillis() - it.second < withinMs }?.first
 
     /** Whether a hold here has somewhere to go: an open session, not in the middle of a turn, its words not being typed over. */
-    val canTake: Boolean get() = _chat.value?.let { (it.opened && !it.running && it.asking == null) || it.editing } == true
+    val canTake: Boolean get() = typing.value || _chat.value?.let { (it.opened && !it.running && it.asking == null) || it.editing } == true
 
     private val _inserts = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    /** A hold's words while the waiting words are being edited: the editor puts them in at its cursor. */
+    /** A hold's words while the waiting words are being edited, or the text box is open: put in at its cursor. */
     val inserts: SharedFlow<String> = _inserts
+
+    /** The page's text box is open (focused): a hold writes into it, at its cursor, and nothing is sent. */
+    val typing = MutableStateFlow(false)
 
     /** The grace window after a hold, in ms: its words wait this long, to be cancelled or edited, before they are sent. 0 sends at once. */
     @Volatile var sendDelayMs = 2_000L
@@ -206,7 +209,7 @@ class Agents(
      */
     fun say(words: String) {
         val c = _chat.value ?: return
-        if (c.editing) { _inserts.tryEmit(words); return }
+        if (c.editing || (typing.value && c.pending == null)) { _inserts.tryEmit(words); return }
         val all = c.pending?.let { "$it $words" } ?: words
         if (c.cancelSoon) { _chat.update { it?.copy(pending = null, cancelSoon = false, editSoon = false) }; return }
         if (c.editSoon) { _chat.update { it?.copy(pending = all, editing = true, editSoon = false, unsent = null) }; return }
@@ -260,16 +263,6 @@ class Agents(
         val p = _chat.value?.pending ?: return
         _chat.update { it?.copy(pending = null, editing = false) }
         send(p)
-    }
-
-    /**
-     * The editor's words once a hold put more in at its cursor: out of the editor and into the
-     * grace window again, as after any hold (edit or cancel, else they are sent). Blank, dropped.
-     */
-    fun editedByVoice(words: String) {
-        waiting?.cancel()
-        _chat.update { it?.copy(pending = null, editing = false, editSoon = false, cancelSoon = false) }
-        if (words.isNotBlank()) say(words.trim())
     }
 
     /** The words as typed over, sent now; blank, nothing is sent. */
