@@ -30,11 +30,13 @@ enum class Feature(val word: String, val hue: Color) {
      */
     Atelier("Atelier", Hue.Atelier),
     /** Coding agents on a computer running acp-bridge (Agents.kt). Beam's alone too, before Atelier in its room. */
-    Agents("Agents", Hue.Agents);
+    Agents("Agents", Hue.Agents),
+    /** A shell on the computer running acp-bridge (Terminal.kt). Beam's alone, after Agents in its room. */
+    Terminal("Terminal", Hue.Terminal);
 
     companion object {
-        /** The room every design but Beam has: every feature but [Atelier] and [Agents], in order. */
-        val room: List<Feature> = entries - Atelier - Agents
+        /** The room every design but Beam has: every feature but [Atelier], [Agents] and [Terminal], in order. */
+        val room: List<Feature> = entries - Atelier - Agents - Terminal
     }
 
     val glyph: ImageVector
@@ -52,6 +54,7 @@ enum class Feature(val word: String, val hue: Color) {
             Settings -> Glyphs.Settings
             Atelier -> Glyphs.Atelier
             Agents -> Glyphs.Agents
+            Terminal -> Glyphs.Terminal
         }
 }
 

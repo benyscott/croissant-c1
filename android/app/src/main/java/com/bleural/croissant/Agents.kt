@@ -330,7 +330,7 @@ class Agents(
                 try {
                     val info = client.hello()
                     named(info.host)
-                    val agents = client.agents()
+                    val agents = client.agents().filter { it.id != Terminal.AGENT }  // the shell is the Terminal's
                     val was = _state.value
                     _state.update { it.copy(reach = BridgeReach.Up, host = info.host, agents = agents) }
                     if (was.reach == BridgeReach.Away) was.sessions.filterValues { it.error != null }.keys.forEach(::sessions)

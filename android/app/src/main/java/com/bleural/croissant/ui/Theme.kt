@@ -115,6 +115,8 @@ object Hue {
     val Atelier = Color(0xFFFF8F80)
     /** Agents', mint, the one neon none of the others has (provisional, 2026-10-21). */
     val Agents = Color(0xFF4CF2B8)
+    /** The Terminal's phosphor green. */
+    val Terminal = Color(0xFF00FF41)
 }
 
 private fun grotesk(size: Int, height: Int, weight: FontWeight, spacing: Double = 0.0) = Grotesk.copy(
