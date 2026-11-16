@@ -1,6 +1,7 @@
 package com.bleural.croissant.ui.beam
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyListState
@@ -82,6 +83,7 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
     val folder = cwd.trimEnd('/').substringAfterLast('/').ifEmpty { cwd }
     val r = agentLook(agent).ramp
     val (scroll, pull) = rememberWordsScroll(nav::pop)
+    val typed = remember(cwd) { TextFieldState() }
     val heldNew = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true)
     // The new chat's card grows as you talk: its bottom, with the newest words, stays in view.
     LaunchedEffect(heldNew) { scroll.animateScrollTo(scroll.maxValue) }
@@ -102,6 +104,7 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
             Spacer(Modifier.height(40.px))
         }
         TopFade(r, scroll)
+        if (heldNew == null && c?.opened == true) TypeBox(typed, r.hue, canSend = true, besideKey = false, onSend = core.agents::sendEdited)
     }
     }
 }
@@ -128,6 +131,8 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     LazyWheel(list, pull, 96f)
     val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true)
     val r = agentLook(agent).ramp
+    // The text box's words (TypeBox), kept while a turn runs or a hold's card is up.
+    val typed = remember(session) { TextFieldState() }
     val scope = rememberCoroutineScope()
     val far = with(LocalDensity.current) { FAR.px.toPx() }
     // Shown once the bridge has sent what it holds, already at its newest line: laid out unseen,
@@ -225,6 +230,8 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
             if (c != null) {
                 Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.px, bottom = 24.px).size(84.px).drawBehind { drawCircle(GROUND) })
                 QuietKey(Glyphs.Folder, r, onClick = { nav.push(Screen.AgentFiles(agent, c.cwd)) })
+                // Left of the folder key, over it once tapped open (HeldCard.kt).
+                if (held == null && c.opened) TypeBox(typed, r.hue, canSend = !c.running && c.asking == null, besideKey = true, onSend = core.agents::sendEdited)
             }
         }
         // The header word, tapped: back up to the first line, as a phone's clock does.
@@ -249,7 +256,8 @@ private fun BoxScope.DownKey(r: Ramp, shown: Boolean, onClick: () -> Unit) {
     val a by animateFloatAsState(if (shown) 1f else 0f, tween(160), label = "down")
     if (a <= 0.01f) return
     Box(
-        Modifier.align(Alignment.BottomCenter).padding(bottom = 36.px).size(60.px).graphicsLayer { alpha = a }
+        // Above the text box's row (84 high, 24 up), not over it.
+        Modifier.align(Alignment.BottomCenter).padding(bottom = 124.px).size(60.px).graphicsLayer { alpha = a }
             .drawBehind { drawCircle(GROUND); drawCircle(r.hue, size.width / 2f - 1.5f * size.width / 60f, style = Stroke(3f * size.width / 60f)) }
             .clip(CircleShape).tappable(if (shown) onClick else null),
         contentAlignment = Alignment.Center,

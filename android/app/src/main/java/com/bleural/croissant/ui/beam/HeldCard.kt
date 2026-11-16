@@ -1,6 +1,16 @@
 package com.bleural.croissant.ui.beam
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -15,6 +25,7 @@ import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.maxLength
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.bleural.croissant.ui.OwnTextField
 import androidx.compose.ui.focus.FocusRequester
@@ -109,6 +120,7 @@ internal fun HeldCard(
     }
     val ink = if (held is Held.Heard) INK else GROUND
     val dots = remember(hue) { ramp(hue) }
+    val unsentCopied = rememberCopied()
     // Heard to sending, the card closes to the message card's height rather than jumping to it.
     var card = Modifier.padding(start = CARD_X.px, end = CARD_X.px).fillMaxWidth()
         .animateContentSize(spring(dampingRatio = 0.85f, stiffness = 450f))
@@ -124,8 +136,11 @@ internal fun HeldCard(
                         Cues.play(Sound.FieldFocus); onEditSoon()
                     }.then(words))
                 is Held.Failed -> Text(held.words, style = BeamType.Body, color = ink, modifier = words)
+                // Words that did not get there: a long press copies them, to paste in the text box.
+                is Held.Unsent -> Text(held.words, style = BeamType.Body, color = ink, modifier = Modifier.copyOnHold(held.words, unsentCopied).then(words))
                 else -> Text(held.words, style = BeamType.Body, color = ink, modifier = words)
             }
+            if (held is Held.Unsent && unsentCopied.value) CopiedLine(true, GROUND)
             when (held) {
                 is Held.Heard -> Box(Modifier.fillMaxWidth().height(98.px)) {
                     if (held.talking) CardLevel(level, hue, Modifier.padding(top = 26.px))
@@ -176,13 +191,95 @@ private fun CardLevel(level: () -> Float, hue: Color, modifier: Modifier) {
     }
 }
 
-/** One of your messages: your words in Body black on [fill] from x 36, 400 across, first baseline 48 down, 22 under the last. */
+/** One of your messages: your words in Body black on [fill] from x 36, 400 across, first baseline 48 down, 22 under the last. A long press copies them. */
 @Composable
 internal fun Message(words: String, fill: Color) {
-    Box(Modifier.padding(start = CARD_X.px, end = CARD_X.px).fillMaxWidth().clip(RoundedCornerShape(16.px)).background(fill)) {
+    val copied = rememberCopied()
+    Box(Modifier.padding(start = CARD_X.px, end = CARD_X.px).fillMaxWidth().clip(RoundedCornerShape(16.px)).background(fill)
+        .copyOnHold(words, copied)) {
         Column(Modifier.fillMaxWidth()) {
             Text(words.ifBlank { "…" }, style = BeamType.Body, color = GROUND, modifier = Modifier.padding(start = IN_START.px, end = IN_END.px).wordsAt(48f))
-            Spacer(Modifier.height(22.px))
+            CopiedLine(copied.value, GROUND)
+        }
+    }
+}
+
+/** Whether words were just copied: true for a moment after a long press. */
+@Composable
+private fun rememberCopied(): MutableState<Boolean> {
+    val copied = remember { mutableStateOf(false) }
+    LaunchedEffect(copied.value) { if (copied.value) { delay(1_500); copied.value = false } }
+    return copied
+}
+
+/** A long press puts [words] on the clipboard, to paste in the text box ([TypeBox]) or anywhere. */
+@Composable
+private fun Modifier.copyOnHold(words: String, copied: MutableState<Boolean>): Modifier {
+    val context = LocalContext.current
+    return combinedClickable(remember { MutableInteractionSource() }, indication = null, onClick = {}, onLongClick = {
+        Cues.play(Sound.LongPress)
+        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("words", words))
+        copied.value = true
+    })
+}
+
+/** The card's foot: 22 high, or "copied" at the right for a moment after a long press. */
+@Composable
+private fun CopiedLine(copied: Boolean, ink: Color) {
+    if (!copied) return Spacer(Modifier.height(22.px))
+    Box(Modifier.fillMaxWidth().height(58.px)) {
+        Text("copied", style = BeamType.Value, color = ink, modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.px, end = IN_END.px))
+    }
+}
+
+/**
+ * The text box at a conversation's foot: a field as tall as the folder key (84), left of it
+ * when [besideKey], one line. Tapped, it opens wider and taller over the foot, the keys under
+ * it; a long press in it brings the system's bubble (paste, copy, cut, select all). Its send
+ * sends the words as the next prompt, only while [canSend] (the session open, no turn
+ * running); the keys' done only puts them away. [state] is the page's, so the words stay.
+ */
+@Composable
+internal fun BoxScope.TypeBox(state: TextFieldState, hue: Color, canSend: Boolean, besideKey: Boolean, onSend: (String) -> Unit) {
+    val keys = LocalSoftwareKeyboardController.current
+    val r = remember(hue) { ramp(hue) }
+    var open by remember { mutableStateOf(false) }
+    val requester = remember { FocusRequester() }
+    val ready = canSend && state.text.isNotBlank()
+    fun send() {
+        if (!ready) return
+        Cues.play(Sound.Commit)
+        onSend(state.text.toString())
+        state.clearText()
+    }
+    val end = if (open || !besideKey) 16f else 24f + 84f + 12f
+    Column(Modifier.align(Alignment.BottomStart).padding(start = 16.px, end = end.px, bottom = (if (open) 16f else 24f).px).fillMaxWidth()
+        .animateContentSize(spring(dampingRatio = 0.85f, stiffness = 450f))
+        .clip(RoundedCornerShape(if (open) 16.px else 42.px)).background(GROUND)
+        .border(3.px, if (open) hue else SUB, RoundedCornerShape(if (open) 16.px else 42.px))
+        .clickable(remember { MutableInteractionSource() }, indication = null) { requester.requestFocus() }) {
+        Box(Modifier.fillMaxWidth().then(if (open) Modifier.padding(top = 18.px) else Modifier.height(84.px))
+            .padding(start = 28.px, end = 28.px), contentAlignment = if (open) Alignment.TopStart else Alignment.CenterStart) {
+            if (state.text.isEmpty()) Text("write", style = BeamType.Body, color = SUB, maxLines = 1)
+            HueSelection(r) {
+                OwnTextField(
+                    state,
+                    textStyle = BeamType.Body.copy(color = INK),
+                    cursorBrush = SolidColor(hue),
+                    lineLimits = if (open) TextFieldLineLimits.MultiLine(3, 6) else TextFieldLineLimits.MultiLine(1, 1),
+                    inputTransformation = InputTransformation.maxLength(20_000),
+                    // The keys' action is done, not send: a missed full stop never sends. Done puts the keys away, the box stays open with its send.
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { keys?.hide() }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged {
+                        if (it.isFocused && !open) Cues.play(Sound.FieldFocus)
+                        open = it.isFocused
+                    },
+                )
+            }
+        }
+        if (open) Box(Modifier.fillMaxWidth().height(84.px)) {
+            Pill("send", if (ready) hue else SUB, GROUND, Modifier.align(Alignment.TopEnd).padding(top = 18.px, end = 20.px)) { send() }
         }
     }
 }
@@ -225,6 +322,7 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
 /** A hold's words typed over on the keys, the grace window stopped: send them as they are now, or cancel. */
 @Composable
 private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.flow.Flow<String>, onCancel: () -> Unit, onSend: (String) -> Unit, onEditedByVoice: (String) -> Unit) {
+    val keys = LocalSoftwareKeyboardController.current
     val state = remember { TextFieldState(words) }
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { requester.requestFocus() }
@@ -254,8 +352,9 @@ private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.f
                 textStyle = BeamType.Body.copy(color = INK),
                 cursorBrush = SolidColor(hue),
                 inputTransformation = InputTransformation.maxLength(2_000),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { Cues.play(Sound.Commit); onSend(state.text.toString()) }),
+                // Done, not send, as in the text box: the keys go away, send is the card's own.
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { keys?.hide() }),
                 modifier = Modifier.focusRequester(requester).fillMaxWidth().padding(start = IN_START.px, end = IN_END.px),
             )
         }
