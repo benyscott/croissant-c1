@@ -190,10 +190,10 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
                     onOpenBattery = { control.close(null); nav.push(Screen.Battery) },
                     onPower = { core.power(it) },
                     alerts = alerts,
-                    onOpenAlert = { a -> control.close(null); nav.home(); nav.push(Screen.AgentChat(a.agent, a.session, a.cwd)) },
+                    onOpenAlert = { a -> control.close(null); openFromNotice(nav, a.agent, a.session, a.cwd) },
                     onPickAlert = { a, o -> core.agentAlerts.permit(a, o?.id); if (alerts.size + done.size <= 1) control.close(null) },
                     done = done,
-                    onOpenDone = { d -> core.agentAlerts.seen(d); control.close(null); nav.home(); nav.push(Screen.AgentChat(d.agent, d.session, d.cwd)) },
+                    onOpenDone = { d -> core.agentAlerts.seen(d); control.close(null); openFromNotice(nav, d.agent, d.session, d.cwd) },
                     onDismissDone = { d -> core.agentAlerts.seen(d); if (alerts.size + done.size <= 1) control.close(null) },
                 )
             }
@@ -235,4 +235,16 @@ private fun Room(room: RoomState, d: PanelDeps, core: Core, home: HomeState) {
         // The camera's photos key opens Photos in place of the camera, as a jump of the room.
         OpenedLayer(room) { f -> Opened(f, d, core, onGallery = { room.goTo(room.placeOf(Feature.Photos)); Cues.play(Sound.ScreenIn) }) }
     }
+}
+
+/**
+ * A notice's chat, opened from the control centre with the pages it sits on when reached by
+ * hand under it, unseen: the agent's folders and the folder's chats, so the edge drag back
+ * goes to the other chats of the same folder.
+ */
+private fun openFromNotice(nav: NavState, agent: String, session: String, cwd: String) {
+    nav.home()
+    nav.push(Screen.AgentSessions(agent), sound = null)
+    nav.push(Screen.AgentFolder(agent, cwd), sound = null)
+    nav.push(Screen.AgentChat(agent, session, cwd))
 }
