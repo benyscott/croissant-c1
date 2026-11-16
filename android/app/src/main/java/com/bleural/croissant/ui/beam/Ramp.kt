@@ -91,6 +91,8 @@ fun hueOf(f: Feature): Color = when (f) {
     Feature.Atelier -> Color(0xFFFF8F80)
     // The page's PI_HUE, a mint none of the others has (provisional, 2026-10-21).
     Feature.Agents -> Color(0xFF4CF2B8)
+    // White on the wheel; its page is its own phosphor green (Terminal.kt).
+    Feature.Terminal -> Color(0xFFF2F2F2)
 }
 
 /** Something waiting on you to answer (the page's `PI_ASK`): yellow, out of every feature's hue. */

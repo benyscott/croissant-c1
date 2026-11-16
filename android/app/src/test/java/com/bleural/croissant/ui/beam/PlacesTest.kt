@@ -45,7 +45,7 @@ class PlacesTest {
     @Test fun pinnedAgentsGoRightAfterAgentsInPinOrder() {
         val room = beamRoom(emptyList(), listOf("bill"), apps, agents = listOf("codex", "claude", "codex"))
         val agents = room.indexOf(Place.Of(Feature.Agents))
-        assertEquals(listOf(Place.Agent("codex"), Place.Agent("claude"), Place.Of(Feature.Atelier)), room.subList(agents + 1, agents + 4))
+        assertEquals(listOf(Place.Agent("codex"), Place.Agent("claude"), Place.Of(Feature.Terminal)), room.subList(agents + 1, agents + 4))
         assertEquals(PLACES.size + 3, room.size)
     }
 

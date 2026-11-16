@@ -86,6 +86,11 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
                 nav.current.feature == Feature.Agents
         }.collect { core.agents.page(it) }
     }
+    // The Terminal (Terminal.kt): its socket open while its page is in front.
+    LaunchedEffect(room) {
+        snapshotFlow { room.last == Feature.Terminal && room.openTarget > 0.5f && room.homeTarget < 0.5f && nav.current == Screen.Home }
+            .collect { core.terminal.page(it) }
+    }
     // A session's page (AgentChat.kt): open on the bridge while it is in front, a hold there its next prompt.
     LaunchedEffect(room) {
         snapshotFlow { nav.current }.collect { s ->
