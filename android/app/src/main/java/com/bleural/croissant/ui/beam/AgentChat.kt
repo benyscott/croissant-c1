@@ -1,6 +1,9 @@
 package com.bleural.croissant.ui.beam
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.selection.SelectionContainer
+import com.bleural.croissant.ui.PullState
+import com.bleural.croissant.ui.WheelTarget
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -127,11 +130,10 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     val typing by core.agents.typing.collectAsStateWithLifecycle()
     val c = chat?.takeIf { it.agent == agent && it.session == session }
     val name = ui.agents.firstOrNull { it.id == agent }?.name ?: agent
-    // Lazy, so a long session draws only what is in view: the wheel scrolls 96 a tick, up at
-    // the top is the pull back.
+    // Lazy, so a long session draws only what is in view: the wheel goes through it fast
+    // (ChatWheel, below), up at the top is the pull back.
     val list = rememberLazyListState()
     val pull = rememberPull(nav::pop)
-    LazyWheel(list, pull, 96f)
     val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true, typing)
     val r = agentLook(agent).ramp
     // The text box's words (TypeBox), kept while a turn runs or a hold's card is up.
@@ -172,6 +174,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
             else if (at.first < from.first || (at.first == from.first && at.second < from.second)) stick = false
         }
     }
+    ChatWheel(list, pull) { up, atFoot -> if (up) stick = false else if (atFoot) stick = true }
     LaunchedEffect(c?.items?.size, (c?.items?.lastOrNull() as? ChatItem.Said)?.words?.length, c?.running, c?.asking, held) {
         if (!revealed || !stick) return@LaunchedEffect
         // To the foot's bottom, not its top: a hold's card grows as you talk, and its newest words are at its bottom.
@@ -243,6 +246,31 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     }
 }
 
+/**
+ * The wheel through a conversation, fast: a tick is a [WHEEL_PARTS]th of it (one item at the
+ * least), so a few turns go from the newest line to the first. Up at the very top is the pull
+ * back. [onMoved] is told which way (up) and whether it came to the foot.
+ */
+@Composable
+private fun ChatWheel(list: LazyListState, pull: PullState, onMoved: (up: Boolean, atFoot: Boolean) -> Unit) {
+    val scope = rememberCoroutineScope()
+    WheelTarget { delta ->
+        if (delta < 0 && !list.canScrollBackward) pull.stepBack()
+        else if (delta != 0) {
+            val first = list.firstVisibleItemIndex
+            val jump = (list.layoutInfo.totalItemsCount / WHEEL_PARTS).coerceAtLeast(1) * delta
+            // Up from part way into an item, its own top is the first step.
+            val to = (first + jump + (if (delta < 0 && list.firstVisibleItemScrollOffset > 0) 1 else 0)).coerceIn(0, foot(list))
+            scope.launch { list.scrollToItem(to) }
+            onMoved(delta < 0, to == foot(list))
+        }
+        false
+    }
+}
+
+/** How many ticks of the wheel go through a whole conversation. */
+private const val WHEEL_PARTS = 12
+
 /** The foot's index: the last item, the list's end. */
 private fun foot(list: LazyListState): Int = (list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
 
@@ -277,7 +305,8 @@ private fun ChatItemView(items: List<ChatItem>, i: Int, r: Ramp, streaming: Bool
             if (items.getOrNull(i + 1) is ChatItem.You) Spacer(Modifier.height(16.px))
         }
         is ChatItem.Said -> if (item.words.isNotBlank()) Column {
-            SaidWords(item.words, streaming, r)
+            // A long press on a word selects it, its handles to drag, the system's bubble to copy.
+            SelectionContainer { SaidWords(item.words, streaming, r) }
             Spacer(Modifier.height(34.px))
         }
         is ChatItem.Tool -> ToolLine(item, r, last = items.getOrNull(i + 1) !is ChatItem.Tool)
