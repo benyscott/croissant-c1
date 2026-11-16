@@ -35,6 +35,12 @@ The R1 asks, {"id": n, "op": ..., ...}, and gets {"id": n, "result": ...} or {"i
                                      session's folder (files.py), folders first
   read {cwd, path, bytes?}           a file there: {"text"} or {"binary": true}, or with bytes
                                      its {"base64"}; nothing outside the folder, nothing written
+  term {text, cwd}                   {}: run a command for the Terminal (terminal.py) in cwd (~
+                                     allowed), one at a time per R1; then term events:
+                                     {"event": "term", "out"} as its output comes, and
+                                     {"event": "term", "end": true, "code", "stopped", "cwd"}, cwd
+                                     the folder it ended in (after a cd), as a prompt shows it
+  term_cancel                        stop the command running (it ends with "stopped")
 
 The bridge tells, for each watched session:
   {"event": "update", "agent", "sessionId", "seq", "update"}
@@ -83,6 +89,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
 from . import files
+from .terminal import Command
 from .acp import AcpError, Agent, Json
 from .agents import ALL, Spec
 from .config import Config
@@ -170,6 +177,8 @@ class Client:
     def __init__(self, ws: ServerConnection):
         self.ws = ws
         self.out: asyncio.Queue[Json] = asyncio.Queue()
+        self.term = Command()  # the Terminal's command, one at a time
+        self.term_task: asyncio.Task | None = None
 
     def tell(self, message: Json) -> None:
         self.out.put_nowait(message)
@@ -277,6 +286,14 @@ class Bridge:
             return {"asking": [a for s in self.sessions.values() for a in s.asks.values()],
                     "done": list(self.done.values()),
                     "running": [{"agent": s.agent, "sessionId": s.id, "doing": s.doing} for s in self.sessions.values() if s.running]}
+        if op == "term":
+            if client.term_task and not client.term_task.done():
+                raise Refused("a command is running")
+            client.term_task = asyncio.ensure_future(self.term(client, str(m.get("text", "")), str(m.get("cwd") or "~")))
+            return {}
+        if op == "term_cancel":
+            await client.term.stop()
+            return {}
         agent_id = m.get("agent", "")
         if op in ("ls", "read"):
             try:
@@ -470,6 +487,14 @@ class Bridge:
             for client in self.alerted:
                 client.tell({"event": "seen", "agent": key[0], "sessionId": key[1]})
 
+    async def term(self, client: Client, text: str, cwd: str) -> None:
+        try:
+            code, stopped, ended = await client.term.run(text, cwd, lambda out: client.tell({"event": "term", "out": out}))
+            client.tell({"event": "term", "end": True, "code": code, "stopped": stopped, "cwd": ended})
+        except Exception as e:
+            client.tell({"event": "term", "out": f"{e}\n"})
+            client.tell({"event": "term", "end": True, "code": -1, "stopped": False, "cwd": cwd})
+
     # ---- the socket -------------------------------------------------------------------------
 
     def check(self, connection: ServerConnection, request):
@@ -494,6 +519,7 @@ class Bridge:
             pass
         finally:
             writer.cancel()
+            await client.term.stop()  # nobody is left to read it
             self.alerted.discard(client)
             for s in self.sessions.values():
                 s.watchers.discard(client)

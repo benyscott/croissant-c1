@@ -23,6 +23,6 @@ class Spec:
         return [c for c in self.needs if shutil.which(c) is None]
 
 
-from . import claude, codex, hermes, pi, shell  # noqa: E402
+from . import claude, codex, hermes, pi  # noqa: E402
 
-ALL: dict[str, Spec] = {s.id: s for s in (claude.SPEC, codex.SPEC, hermes.SPEC, pi.SPEC, shell.SPEC)}
+ALL: dict[str, Spec] = {s.id: s for s in (claude.SPEC, codex.SPEC, hermes.SPEC, pi.SPEC)}

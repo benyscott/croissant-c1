@@ -4,7 +4,6 @@ import com.bleural.croissant.net.AcpBridgeClient
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,51 +27,45 @@ data class TerminalUi(
 )
 
 /**
- * The Terminal: a shell on the paired bridge's computer, acp-bridge's "shell" agent
- * (acp-bridge/acp_bridge/shell.py), one session for as long as the app runs, started in ~.
- * Each command is a prompt; its output streams back as the agent's words. Its own socket,
- * open while the page is up ([page]); the bridge keeps what was said while it is closed.
+ * The Terminal: commands run on the paired bridge's computer (acp-bridge's term op,
+ * acp-bridge/acp_bridge/terminal.py), starting in ~; the folder a command ends in is where the
+ * next one runs. Its own socket, open while the page is up ([page]); a command still running
+ * when the socket goes (the R1 slept, the page left) is stopped by the bridge.
  */
 class Terminal(private val scope: CoroutineScope, private val bridge: () -> Prefs.AcpBridge) {
     companion object {
-        const val AGENT = "shell"
         /** The most lines kept: beyond, the oldest go. */
         private const val LINES_MAX = 400
-        /** The shell's notes at the end of a command (shell.py): [now in ~/x] moves the prompt, [done] says nothing. */
-        private val MOVED = Regex("""\s*\[now in ([^\]]+)]""")
-        private val DONE = Regex("""\s*\[done]""")
     }
 
     private val client = AcpBridgeClient(bridge).also { c ->
         c.onEvent = ::heard
-        c.onDrop = { if (up) reopen() }
+        c.onDrop = { ended("[connection lost]\n") }
     }
 
     private val _state = MutableStateFlow(TerminalUi())
     val state: StateFlow<TerminalUi> = _state.asStateFlow()
 
     @Volatile private var up = false
-    @Volatile private var session: String? = null
-    @Volatile private var seq = 0
-    @Volatile private var epoch: String? = null
-    private var opening: Job? = null
 
-    /** The page came up (the session is watched again) or went (the socket closes). */
+    /** The page came up or went (the socket closes, stopping a command still running). */
     fun page(on: Boolean) {
         if (on == up) return
         up = on
-        if (on) reopen() else { opening?.cancel(); client.close() }
+        if (!on) { client.close(); ended(null) }
     }
 
-    /** Run [command] in the shell; nothing while one runs. */
+    /** Run [command] at the prompt; nothing while one runs. `clear` clears the screen here. */
     fun run(command: String) {
         val text = command.trim()
         if (text.isEmpty() || _state.value.running) return
         if (text == "clear") return clear()
-        _state.update { it.copy(running = true, error = null) }
+        val cwd = _state.value.cwd
+        add { it.copy(lines = it.lines + TermLine.Command(cwd, text), running = true, error = null) }
         scope.launch {
             try {
-                client.prompt(AGENT, ensure(), text)
+                if (!bridge().set) throw IOException("pair a computer in Agents first")
+                client.ask("term", JSONObject().put("text", text).put("cwd", cwd))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
@@ -83,67 +76,29 @@ class Terminal(private val scope: CoroutineScope, private val bridge: () -> Pref
 
     /** Stop the command running (^C). */
     fun cancel() {
-        val s = session ?: return
-        scope.launch { runCatching { client.cancel(AGENT, s) } }
+        scope.launch { runCatching { client.ask("term_cancel") } }
     }
 
-    /** Clear the screen; the shell and its folder stay. */
+    /** Clear the screen; the folder stays. */
     fun clear() = _state.update { it.copy(lines = emptyList(), error = null) }
 
-    /** The session, made in ~ the first time. */
-    private suspend fun ensure(): String {
-        session?.let { return it }
-        if (!bridge().set) throw IOException("pair a computer in Agents first")
-        return client.new(AGENT, "~").also { session = it; seq = 0 }
-    }
-
-    /** Watch the session again from the last update heard (the socket went, or the page came back). */
-    private fun reopen() {
-        val s = session ?: return
-        opening?.cancel()
-        opening = scope.launch {
-            try {
-                val opened = client.open(AGENT, s, _state.value.cwd, seq, epoch)
-                epoch = opened.epoch
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: IOException) {
-                _state.update { it.copy(running = false, error = e.message ?: "the bridge is away") }
-            }
-        }
-    }
-
     private fun heard(e: JSONObject) {
-        if (e.optString("sessionId") != session) return
-        when (e.optString("event")) {
-            // The bridge restarted: its log of this session is gone, ours stays.
-            "reset" -> { seq = 0; epoch = e.optString("epoch").ifEmpty { null }; return }
-            "update" -> Unit
-            else -> return
-        }
-        val n = e.optInt("seq")
-        if (n <= seq) return
-        seq = n
-        val u = e.optJSONObject("update") ?: return
-        when (u.optString("sessionUpdate")) {
-            "user_message_chunk" -> text(u)?.let { t -> add { it.copy(lines = it.lines + TermLine.Command(it.cwd, t)) } }
-            "agent_message_chunk" -> text(u)?.let(::output)
-            "bridge_turn" -> {
-                val running = u.optBoolean("running")
-                val error = u.optString("error").takeIf { u.has("error") }
-                _state.update { it.copy(running = running) }
-                if (error != null) output("error: $error")
-            }
-        }
+        if (e.optString("event") != "term") return
+        if (e.has("out")) output(e.optString("out"))
+        if (!e.optBoolean("end")) return
+        val code = e.optInt("code")
+        if (code != 0 && !e.optBoolean("stopped")) output("[exit $code]\n")
+        _state.update { it.copy(running = false, cwd = e.optString("cwd").ifEmpty { it.cwd }) }
     }
 
-    private fun text(u: JSONObject): String? =
-        u.optJSONObject("content")?.takeIf { it.optString("type") == "text" }?.optString("text")
+    /** A command running is gone with the socket: [note] says so. */
+    private fun ended(note: String?) {
+        if (!_state.value.running) return
+        note?.let(::output)
+        _state.update { it.copy(running = false) }
+    }
 
-    private fun output(raw: String) {
-        var t = raw
-        MOVED.find(t)?.let { m -> val to = m.groupValues[1]; _state.update { it.copy(cwd = to) }; t = t.removeRange(m.range) }
-        t = DONE.replace(t, "")
+    private fun output(t: String) {
         if (t.isEmpty()) return
         add { s ->
             val last = s.lines.lastOrNull()
