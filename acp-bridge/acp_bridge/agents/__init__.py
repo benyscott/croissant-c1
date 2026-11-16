@@ -17,6 +17,7 @@ class Spec:
     needs: list[str]  # commands that must be on PATH for it to run
     setup: str
     env: dict[str, str] = field(default_factory=dict)
+    mode: str | None = None  # the session mode set on every session the bridge makes or loads
 
     def missing(self) -> list[str]:
         return [c for c in self.needs if shutil.which(c) is None]

@@ -144,6 +144,8 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
     val transforming = remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val control = remember { ControlState(scope) }
+    val alerts by core.agentAlerts.list.collectAsStateWithLifecycle()
+    val done by core.agentAlerts.done.collectAsStateWithLifecycle()
     // Anything that changes what is under them puts the control centre and the sheet away.
     val under by remember { derivedStateOf { Triple(nav.current, room.open > 0.5f, room.home > 0.5f) } }
     LaunchedEffect(under) { control.close(null) }
@@ -187,6 +189,12 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
                     onOpenTailnet = { control.close(null); nav.push(Screen.Tailscale) },
                     onOpenBattery = { control.close(null); nav.push(Screen.Battery) },
                     onPower = { core.power(it) },
+                    alerts = alerts,
+                    onOpenAlert = { a -> control.close(null); nav.home(); nav.push(Screen.AgentChat(a.agent, a.session, a.cwd)) },
+                    onPickAlert = { a, o -> core.agentAlerts.permit(a, o?.id); if (alerts.size + done.size <= 1) control.close(null) },
+                    done = done,
+                    onOpenDone = { d -> core.agentAlerts.seen(d); control.close(null); nav.home(); nav.push(Screen.AgentChat(d.agent, d.session, d.cwd)) },
+                    onDismissDone = { d -> core.agentAlerts.seen(d); if (alerts.size + done.size <= 1) control.close(null) },
                 )
             }
             BeamSheetHost(sheet, under, underRamp)

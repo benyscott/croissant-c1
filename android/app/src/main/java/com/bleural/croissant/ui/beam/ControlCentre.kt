@@ -5,7 +5,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,6 +44,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import com.bleural.croissant.AgentAlert
+import com.bleural.croissant.AgentDone
+import com.bleural.croissant.AskOption
 import com.bleural.croissant.DeviceStatus
 import com.bleural.croissant.audio.Cues
 import com.bleural.croissant.audio.Links
@@ -120,6 +133,12 @@ internal fun BeamControlCenter(
     onOpenTailnet: () -> Unit,
     onOpenBattery: () -> Unit,
     onPower: (PowerAction) -> Unit,
+    alerts: List<AgentAlert> = emptyList(),
+    onOpenAlert: (AgentAlert) -> Unit = {},
+    onPickAlert: (AgentAlert, AskOption?) -> Unit = { _, _ -> },
+    done: List<AgentDone> = emptyList(),
+    onOpenDone: (AgentDone) -> Unit = {},
+    onDismissDone: (AgentDone) -> Unit = {},
 ) {
     val sheet = LocalSheet.current
     // Whether it is on screen at all; the number itself is read in draw and layer blocks only.
@@ -156,8 +175,71 @@ internal fun BeamControlCenter(
                 ))
             })
         }
+        // What waits on you, under the keys, sliding with them: a permission of any session, then turns that ended.
+        if (showing && (alerts.isNotEmpty() || done.isNotEmpty())) Column(
+            Modifier.offset(y = PANEL.px).fillMaxWidth().heightIn(max = (SCREEN_H - PANEL).px)
+                .graphicsLayer { translationY = state.height * (state.shown.value - 1f); alpha = state.shown.value }
+                .verticalScroll(rememberScrollState()),
+        ) {
+            alerts.forEach { a -> AlertCard(a, onOpen = { onOpenAlert(a) }, onPick = { o -> onPickAlert(a, o) }) }
+            done.forEach { d -> DoneCard(d, onOpen = { onOpenDone(d) }, onDismiss = { onDismissDone(d) }) }
+        }
+        // Closed, a dot at the top right says something waits, in the hue of its agent: pull down to see it.
+        val first = alerts.firstOrNull()?.agent ?: done.firstOrNull()?.agent
+        if (first != null && !state.open) Canvas(Modifier.align(Alignment.TopEnd).offset(x = (-16).px, y = 16.px).size(14.px)) { drawCircle(agentLook(first).hue) }
     }
     if (state.open) WheelTarget { false }
+}
+
+/** The screen's height in page px: what is left under the keys holds the alerts. */
+private const val SCREEN_H = 640f
+
+/**
+ * Who a notice is from, over it: the folder and the agent in grey, the conversation's title in
+ * the agent's hue; a tap opens the conversation.
+ */
+@Composable
+private fun NoticeHead(folder: String, agent: String, title: String, r: Ramp, onOpen: () -> Unit) {
+    Column(Modifier.fillMaxWidth().tappable(onOpen).padding(start = 20.px, end = 20.px, top = 16.px)) {
+        Text("$folder · $agent", style = BeamType.Value, color = SUB, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (title.isNotBlank()) Text(title, style = BeamType.Value, color = r.hue, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * A permission waiting in a session, in the control centre: the chat's own question card
+ * ([Question], in the agent's hue) with who it is from over it. A tap on that opens the
+ * session's chat; an option answers it from here.
+ */
+@Composable
+private fun AlertCard(a: AgentAlert, onOpen: () -> Unit, onPick: (AskOption?) -> Unit) {
+    val r = agentLook(a.agent).ramp
+    Question(a.asking.title, null, a.asking.options, r, head = { NoticeHead(a.folder, a.agent, a.title, r, onOpen) }, after = 8f) { o ->
+        Cues.play(if (o == null || o.kind.startsWith("reject")) Sound.Destroy else Sound.Commit)
+        onPick(o)
+    }
+}
+
+/**
+ * A turn that ended while its chat was not on screen: framed as the question card, the start of
+ * what the agent said (in danger when the turn failed), then open (in the hue) and dismiss.
+ */
+@Composable
+private fun DoneCard(d: AgentDone, onOpen: () -> Unit, onDismiss: () -> Unit) {
+    val r = agentLook(d.agent).ramp
+    Box(Modifier.padding(start = 16.px, end = 16.px, top = 8.px).fillMaxWidth().border(3.px, r.hue, RoundedCornerShape(16.px))) {
+        Column(Modifier.fillMaxWidth()) {
+            NoticeHead(d.folder, d.agent, d.title, r, onOpen)
+            Text(d.error ?: d.words.ifBlank { "done" }, style = BeamType.Body, color = if (d.error != null) r.danger else INK,
+                maxLines = 3, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().tappable(onOpen).padding(start = 20.px, end = 20.px, top = 8.px))
+            Row(Modifier.padding(start = 20.px, end = 20.px, top = 24.px, bottom = 22.px), horizontalArrangement = Arrangement.spacedBy(12.px)) {
+                Pill("open", r.hue, GROUND) { Cues.play(Sound.Commit); onOpen() }
+                Pill("dismiss", SUB, GROUND) { Cues.play(Sound.Commit); onDismiss() }
+            }
+        }
+    }
+    Spacer(Modifier.height(8.px))
 }
 
 /**

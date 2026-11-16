@@ -461,6 +461,7 @@ class Core(
         liveWordsSet = Prefs.liveWords(activity)
         acpBridges = Prefs.acpBridges(activity)
         acpBridge = acpBridges.firstOrNull { it.token == Prefs.acpActive(activity) } ?: acpBridges.firstOrNull() ?: Prefs.AcpBridge()
+        agentAlerts.start()
         look = Prefs.look(activity)
         if (look != Look.DEFAULT) ui = designFor(look)
         // Where an update was left: an install to finish comes up locked before the first frame,
@@ -1161,7 +1162,10 @@ class Core(
         private set
 
     /** Its agents and their sessions, asked for while the Agents page is up ([Agents.page]). */
-    val agents by lazy { Agents(scope, bridge = { acpBridge }, named = ::nameAcpBridge) }
+    val agents: Agents by lazy { Agents(scope, bridge = { acpBridge }, named = ::nameAcpBridge, answered = { a, s, r -> agentAlerts.drop(a, s, r) }) }
+
+    /** Every permission the bridge waits on and every turn ended unseen, whatever page is up: the control centre shows them; a new one sounds. */
+    val agentAlerts: AgentAlerts by lazy { AgentAlerts(scope, bridge = { acpBridge }, heard = { Cues.play(Sound.AnswerArrived) }, onScreen = { agents.chat.value?.key }) }
 
     /**
      * Pair with the bridge a QR named ([com.bleural.croissant.net.parseAcpLink]) and use it: one
@@ -1180,7 +1184,7 @@ class Core(
         Prefs.setAcpActive(activity, token)
         val changed = b.token != acpBridge.token || b.hosts != acpBridge.hosts || b.port != acpBridge.port
         acpBridge = b
-        if (changed) agents.relinked()
+        if (changed) { agents.relinked(); agentAlerts.relinked() }
     }
 
     /** Forget the bridge with [token]; when it was in use, the first left is used, or none. */
@@ -1189,7 +1193,7 @@ class Core(
         if (acpBridge.token != token) return
         val next = acpBridges.firstOrNull()
         if (next != null) useAcpBridge(next.token)
-        else { Prefs.setAcpActive(activity, null); acpBridge = Prefs.AcpBridge(); agents.relinked() }
+        else { Prefs.setAcpActive(activity, null); acpBridge = Prefs.AcpBridge(); agents.relinked(); agentAlerts.relinked() }
     }
 
     /** The bridge in use answered as [name]: kept, for the bridges page. */

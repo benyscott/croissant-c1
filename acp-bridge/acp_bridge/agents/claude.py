@@ -18,4 +18,7 @@ SPEC = Spec(
     needs=["npx", "claude"],
     setup="Install Claude Code (claude.com/claude-code) and sign in once with `claude`.",
     env={"CLAUDE_CODE_EXECUTABLE": shutil.which("claude") or "claude"},
+    # Claude decides its own permissions: routine actions go ahead, risky ones still ask the R1.
+    # Only the R1's sessions: Claude Code in a terminal keeps its own mode.
+    mode="auto",
 )

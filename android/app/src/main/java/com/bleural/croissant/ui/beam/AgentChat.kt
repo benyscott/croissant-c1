@@ -344,12 +344,17 @@ private fun Working(r: Ramp, onStop: () -> Unit) {
 /**
  * The agent asks before it acts: a card ringed in the hue, what it asks ([title]) and what it
  * is about to do ([doing]) under it, then its options as pills, allow in the hue, the others
- * black ringed, reject in danger.
+ * black ringed, reject in danger. The control centre's (ControlCentre.kt) has a [head] over it
+ * and less space under it ([after]).
  */
 @Composable
-private fun Question(title: String, doing: String?, options: List<AskOption>, r: Ramp, onPick: (AskOption?) -> Unit) {
+internal fun Question(
+    title: String, doing: String?, options: List<AskOption>, r: Ramp,
+    head: (@Composable () -> Unit)? = null, after: Float = 24f, onPick: (AskOption?) -> Unit,
+) {
     Box(Modifier.padding(start = 16.px, end = 16.px, top = 8.px).fillMaxWidth().border(3.px, r.hue, RoundedCornerShape(16.px))) {
         Column(Modifier.fillMaxWidth()) {
+            head?.invoke()
             Text(title.ifBlank { "may it go on?" }, style = BeamType.Body, color = INK,
                 modifier = Modifier.padding(start = 20.px, end = 28.px).wordsAt(48f))
             if (!doing.isNullOrBlank() && doing != title) Text(doing, style = BeamType.Value, color = SUB, maxLines = 3, overflow = TextOverflow.Ellipsis,
@@ -366,7 +371,7 @@ private fun Question(title: String, doing: String?, options: List<AskOption>, r:
             }
         }
     }
-    Spacer(Modifier.height(24.px))
+    Spacer(Modifier.height(after.px))
 }
 
 /** An option's word: short by its kind, the agent's own name for a kind ACP does not know. */

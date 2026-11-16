@@ -53,7 +53,13 @@ data class AgentFolder(val cwd: String, val name: String, val sessions: List<Age
  * conversation is kept here by its key once opened, so coming back to it asks only for what
  * it missed; the socket gone while it is open (the R1 slept), it is opened again.
  */
-class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.AcpBridge, private val named: (String) -> Unit = {}) {
+class Agents(
+    private val scope: CoroutineScope,
+    private val bridge: () -> Prefs.AcpBridge,
+    private val named: (String) -> Unit = {},
+    /** A permission answered here (agent, session, request): off the control centre at once. */
+    private val answered: (String, String, String) -> Unit = { _, _, _ -> },
+) {
     companion object {
         private const val TAG = "Agents"
         /** The most sessions of an agent read: beyond, the oldest are left out. */
@@ -305,6 +311,7 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
         val c = _chat.value ?: return
         val a = c.asking ?: return
         _chat.update { it?.copy(asking = null) }
+        answered(c.agent, c.session, a.request)
         scope.launch {
             try {
                 client.permit(c.agent, c.session, a.request, option)

@@ -24,6 +24,12 @@ The R1 asks, {"id": n, "op": ..., ...}, and gets {"id": n, "result": ...} or {"i
                                      answer a permission, with one of its options' optionId
                                      (null cancels)
   close {agent, sessionId}           stop watching
+  alerts                             {"asking": [asking event, ...], "done": [done event, ...]}:
+                                     every permission waiting now and every turn ended unseen, in
+                                     any session; from then on this R1 is told each one that comes
+                                     ("asking", "done") and each one gone ("answered", "seen"),
+                                     watched or not, so it can show them wherever it is
+  seen {agent, sessionId}            the session's ended turn is seen (opening it is too)
   ls {cwd, path}                     {"entries": [{"name", "dir", "size", "mtime"}]}: a folder in a
                                      session's folder (files.py), folders first
   read {cwd, path, bytes?}           a file there: {"text"} or {"binary": true}, or with bytes
@@ -40,6 +46,14 @@ tool_call, plan, ...), or one of the bridge's own, each in the same log:
                                      "stopReason"} or {"running": false, "error"} at its end
   {"event": "reset", "agent", "sessionId", "epoch"}
                                      forget what was heard of the session: its log follows anew
+And to an R1 that asked for alerts, for every session:
+  {"event": "asking", "agent", "sessionId", "cwd", "title", "request", "toolCall", "options"}
+                                     title: the conversation's, as its agent lists it, else its
+                                     first words
+  {"event": "answered", "agent", "sessionId", "request", "option"}
+  {"event": "done", "agent", "sessionId", "cwd", "title", "words", "error"?}
+                                     a turn ended: words, the start of what the agent said in it
+  {"event": "seen", "agent", "sessionId"}
 A session's log lives as long as the bridge runs, its seqs its epoch's ([Session.epoch]: the
 run's, new at each start, and how often the log was started anew): an R1 that slept opens
 again with the last seq it saw and gets only what it missed, a permission still waiting among
@@ -87,6 +101,7 @@ class Session:
     log: list[Json] = field(default_factory=list)
     watchers: set["Client"] = field(default_factory=set)
     waiting: dict[str, asyncio.Future] = field(default_factory=dict)
+    asks: dict[str, Json] = field(default_factory=dict)  # the waiting ones' "asking" events
     running: bool = False
     loaded: bool = False  # the agent process running now has it (new here, or loaded)
     replay: list[Json] | None = None  # while loading: its history as it comes, set against the log after
@@ -94,6 +109,17 @@ class Session:
     opening: asyncio.Lock = field(default_factory=asyncio.Lock)
     turn: asyncio.Task | None = None
     made: datetime | None = None  # when it was made here: its date until its agent gives one
+    title: str | None = None  # as its agent last listed it
+
+    def name(self) -> str:
+        """The conversation's title, else its first words, short."""
+        if self.title:
+            return self.title
+        for e in self.log:
+            u = e["update"]
+            if u.get("sessionUpdate") == "user_message_chunk" and (t := u.get("content", {}).get("text", "").strip()):
+                return t if len(t) <= 60 else t[:59].rstrip() + "…"
+        return ""
 
     def epoch(self, run: str) -> str:
         return f"{run}.{self.gen}"
@@ -127,6 +153,8 @@ class Bridge:
         self.agents: dict[str, Agent] = {}
         self.starting: dict[str, asyncio.Task] = {}
         self.sessions: dict[tuple[str, str], Session] = {}
+        self.alerted: set[Client] = set()  # told every permission, in any session
+        self.done: dict[tuple[str, str], Json] = {}  # a turn ended and not seen yet, by session
         self.epoch = secrets.token_hex(4)
 
     # ---- agents ----------------------------------------------------------------------------
@@ -183,10 +211,19 @@ class Bridge:
         s.waiting[request] = future
         s.add({"sessionUpdate": "bridge_permission", "request": request,
                "toolCall": params.get("toolCall", {}), "options": params.get("options", [])})
+        s.asks[request] = {"event": "asking", "agent": agent, "sessionId": s.id, "cwd": s.cwd, "title": s.name(),
+                           "request": request,
+                           "toolCall": params.get("toolCall", {}), "options": params.get("options", [])}
+        for client in self.alerted:
+            client.tell(s.asks[request])
+        option = None
         try:
             option = await future
         finally:
             s.waiting.pop(request, None)
+            s.asks.pop(request, None)
+            for client in self.alerted:
+                client.tell({"event": "answered", "agent": agent, "sessionId": s.id, "request": request, "option": option})
         s.add({"sessionUpdate": "bridge_permitted", "request": request, "option": option})
         if option is None:
             return {"outcome": {"outcome": "cancelled"}}
@@ -200,6 +237,10 @@ class Bridge:
         if op == "agents":
             return [{"id": s.id, "name": s.name, "ready": not s.missing(), "missing": s.missing(),
                      "setup": s.setup} for s in ALL.values()]
+        if op == "alerts":
+            self.alerted.add(client)
+            return {"asking": [a for s in self.sessions.values() for a in s.asks.values()],
+                    "done": list(self.done.values())}
         agent_id = m.get("agent", "")
         if op in ("ls", "read"):
             try:
@@ -219,10 +260,15 @@ class Bridge:
             s = self.sessions[(agent_id, made["sessionId"])] = Session(agent_id, made["sessionId"], cwd,
                                                                       made=datetime.now(timezone.utc))
             s.loaded = True
+            await self.mode(agent_id, s)
             s.watchers.add(client)
             return {"sessionId": s.id}
         key = (agent_id, m.get("sessionId", ""))
+        if op == "seen":
+            self.seen(key)
+            return {}
         if op == "open":
+            self.seen(key)
             if held := self.sessions.get(key):
                 held.watchers.discard(client)  # what it gets of the session follows here, once
             s = await self.open(agent_id, m["sessionId"], m.get("cwd"))
@@ -274,6 +320,8 @@ class Bridge:
             s = self.sessions.get((agent_id, x["sessionId"]))
             if s and s.made and not x.get("updatedAt"):
                 x["updatedAt"] = s.made.isoformat().replace("+00:00", "Z")
+            if s and x.get("title"):
+                s.title = x["title"]
             x["running"] = bool(s and s.running)
             x["asking"] = bool(s and s.waiting)  # a permission waits on the R1
         return {**listed, "sessions": extra + listed.get("sessions", [])}
@@ -294,6 +342,7 @@ class Bridge:
                 if not s.loaded:
                     await agent.call("session/resume", {"sessionId": s.id, "cwd": s.cwd, "mcpServers": []})
                     s.loaded = True
+                    await self.mode(agent_id, s)
                 return s
             s.replay = []
             try:
@@ -307,8 +356,18 @@ class Bridge:
             finally:
                 s.replay = None
             s.loaded = True
+            await self.mode(agent_id, s)
             self.heard(s, replay)
             return s
+
+    async def mode(self, agent_id: str, s: Session) -> None:
+        """The agent's own mode for the session ([Spec.mode]), when it has one; not set, it runs as it would."""
+        if not (mode := self.spec(agent_id).mode):
+            return
+        try:
+            await (await self.agent(agent_id)).call("session/set_mode", {"sessionId": s.id, "modeId": mode})
+        except AcpError as e:
+            log.warning("%s %s: mode %s not set: %s", agent_id, s.id, mode, e)
 
     def heard(self, s: Session, replay: "list[Json]") -> None:
         """A session's history as its agent replayed it, set against its log: only the new end
@@ -335,9 +394,35 @@ class Bridge:
                 "sessionId": s.id, "prompt": [{"type": "text", "text": text}]})
             s.running = False
             s.add({"sessionUpdate": "bridge_turn", "running": False, "stopReason": done.get("stopReason")})
+            self.ended(s, None)
         except Exception as e:
             s.running = False
             s.add({"sessionUpdate": "bridge_turn", "running": False, "error": str(e)})
+            self.ended(s, str(e))
+
+    def ended(self, s: Session, error: str | None) -> None:
+        """A turn of [s] ended: kept as not seen, and told to every R1 that asked for alerts."""
+        said: list[str] = []
+        for e in reversed(s.log):
+            u = e["update"]
+            kind = u.get("sessionUpdate")
+            if kind == "user_message_chunk":
+                break
+            if kind == "agent_message_chunk" and u.get("content", {}).get("type") == "text":
+                said.append(u["content"].get("text", ""))
+        words = " ".join("".join(reversed(said)).split())
+        notice = {"event": "done", "agent": s.agent, "sessionId": s.id, "cwd": s.cwd, "title": s.name(),
+                  "words": words if len(words) <= 200 else words[:199].rstrip() + "…"}
+        if error:
+            notice["error"] = error
+        self.done[(s.agent, s.id)] = notice
+        for client in self.alerted:
+            client.tell(notice)
+
+    def seen(self, key: tuple[str, str]) -> None:
+        if self.done.pop(key, None):
+            for client in self.alerted:
+                client.tell({"event": "seen", "agent": key[0], "sessionId": key[1]})
 
     # ---- the socket -------------------------------------------------------------------------
 
@@ -363,6 +448,7 @@ class Bridge:
             pass
         finally:
             writer.cancel()
+            self.alerted.discard(client)
             for s in self.sessions.values():
                 s.watchers.discard(client)
             log.info("R1 left %s", ws.remote_address[0])
