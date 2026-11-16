@@ -296,8 +296,9 @@ internal fun BoxScope.TypeBox(
 
 /**
  * A hold's words in their grace window: ringed in [hue] as while heard, the words in white, a line
- * under them draining over [windowMs] until they are sent, and cancel at the right. A tap on the
- * words stops the window to edit them ([onEdit]); cancel drops them ([onCancel]).
+ * under them filling left to right over [windowMs] until they are sent, cancel at the left and
+ * send at the right. A tap on the words stops the window to edit them ([onEdit]); cancel drops
+ * them ([onCancel]); send sends them now ([onSend]).
  */
 @Composable
 private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () -> Unit, onEdit: () -> Unit, onSend: () -> Unit) {
@@ -313,18 +314,16 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
             Spacer(Modifier.height(22.px))
         }
     }
-    // Under the card, never over it: the bar draining until they go, then small edit and cancel
-    // side by side (cancel is rarely wanted, so it is not the big one), and send now, big.
+    // Under the card, never over it: the bar filling until they go, then cancel and send.
     Column(Modifier.padding(start = CARD_X.px + 4.px, end = CARD_X.px + 4.px, top = 18.px).fillMaxWidth()) {
         Box(Modifier.fillMaxWidth().height(8.px).clip(RoundedCornerShape(4.px)).background(hue.copy(alpha = 0.25f))) {
-            Box(Modifier.fillMaxWidth(left.value).height(8.px).clip(RoundedCornerShape(4.px)).background(hue))
+            Box(Modifier.fillMaxWidth(1f - left.value).height(8.px).clip(RoundedCornerShape(4.px)).background(hue))
         }
         Spacer(Modifier.height(20.px))
         Row(Modifier.fillMaxWidth()) {
-            Pill("edit", GROUND, INK, Modifier.border(2.px, INK, RoundedCornerShape(23.px))) { Cues.play(Sound.FieldFocus); onEdit() }
-            Spacer(Modifier.padding(start = 12.px))
             Pill("cancel", GROUND, DANGER, Modifier.border(2.px, DANGER, RoundedCornerShape(23.px))) { Cues.play(Sound.Destroy); onCancel() }
             Spacer(Modifier.weight(1f))
+            Pill("send", hue, GROUND) { Cues.play(Sound.Commit); onSend() }
         }
     }
 }
