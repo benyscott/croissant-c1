@@ -24,7 +24,8 @@ The R1 asks, {"id": n, "op": ..., ...}, and gets {"id": n, "result": ...} or {"i
                                      answer a permission, with one of its options' optionId
                                      (null cancels)
   close {agent, sessionId}           stop watching
-  alerts                             {"asking": [asking event, ...], "done": [done event, ...]}:
+  alerts                             {"asking": [asking event, ...], "done": [done event, ...],
+                                     "running": [{"agent", "sessionId", "doing"}, ...]}:
                                      every permission waiting now and every turn ended unseen, in
                                      any session; from then on this R1 is told each one that comes
                                      ("asking", "done") and each one gone ("answered", "seen"),
@@ -54,6 +55,10 @@ And to an R1 that asked for alerts, for every session:
   {"event": "done", "agent", "sessionId", "cwd", "title", "words", "error"?}
                                      a turn ended: words, the start of what the agent said in it
   {"event": "seen", "agent", "sessionId"}
+  {"event": "turn", "agent", "sessionId", "running", "doing"?}
+                                     a turn began (true) or ended (false); told again while it
+                                     runs each time what it does changes: doing, a few words
+                                     ("thinking", "running npm test", "editing Shell.kt")
 A session's log lives as long as the bridge runs, its seqs its epoch's ([Session.epoch]: the
 run's, new at each start, and how often the log was started anew): an R1 that slept opens
 again with the last seq it saw and gets only what it missed, a permission still waiting among
@@ -89,6 +94,32 @@ HISTORY = {"user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "
 log = logging.getLogger("acp-bridge")
 
 
+# What a tool call of each ACP kind is doing, as a verb.
+VERBS = {"read": "reading", "edit": "editing", "delete": "deleting", "move": "moving", "search": "searching",
+         "execute": "running", "think": "thinking", "fetch": "fetching", "switch_mode": "planning"}
+
+
+def doing_of(update: Json) -> str | None:
+    """A few words for what an update shows the agent doing, or None when it shows nothing new."""
+    kind = update.get("sessionUpdate")
+    if kind == "agent_thought_chunk":
+        return "thinking"
+    if kind == "agent_message_chunk":
+        return "writing"
+    if kind != "tool_call":
+        return None
+    verb = VERBS.get(update.get("kind", ""), "working")
+    what = " ".join(str(update.get("title", "")).replace("`", "").split())
+    if verb in ("reading", "editing", "deleting", "moving"):
+        what = what.split(" ")[-1].rstrip("/").rsplit("/", 1)[-1]  # "Read /a/b/Core.kt" -> "Core.kt"
+    elif what.split(" ", 1)[0].lower() in ("read", "edit", "write", "search", "fetch", "grep", "find"):
+        what = what.split(" ", 1)[1] if " " in what else ""
+    if what.startswith("mcp__"):  # "mcp__brain__file" -> "using brain file"
+        verb, what = "using", " ".join(what.split("__")[1:]).replace("_", " ")
+    words = f"{verb} {what}".strip() if what else verb
+    return words if len(words) <= 40 else words[:39].rstrip() + "…"
+
+
 class Refused(Exception):
     """Words for the R1: what it asked cannot be done."""
 
@@ -110,6 +141,7 @@ class Session:
     turn: asyncio.Task | None = None
     made: datetime | None = None  # when it was made here: its date until its agent gives one
     title: str | None = None  # as its agent last listed it
+    doing: str | None = None  # what its running turn does now, in a few words
 
     def name(self) -> str:
         """The conversation's title, else its first words, short."""
@@ -199,6 +231,9 @@ class Bridge:
                 s.replay.append(params.get("update", {}))
             else:
                 s.add(params.get("update", {}))
+                if s.running and (doing := doing_of(params.get("update", {}))) and doing != s.doing:
+                    s.doing = doing
+                    self.turn(s)
 
     async def _request(self, agent: str, method: str, params: Json) -> Json:
         if method != "session/request_permission":
@@ -240,7 +275,8 @@ class Bridge:
         if op == "alerts":
             self.alerted.add(client)
             return {"asking": [a for s in self.sessions.values() for a in s.asks.values()],
-                    "done": list(self.done.values())}
+                    "done": list(self.done.values()),
+                    "running": [{"agent": s.agent, "sessionId": s.id, "doing": s.doing} for s in self.sessions.values() if s.running]}
         agent_id = m.get("agent", "")
         if op in ("ls", "read"):
             try:
@@ -387,7 +423,9 @@ class Bridge:
 
     async def prompt(self, s: Session, text: str) -> None:
         s.running = True
+        s.doing = "thinking"
         s.add({"sessionUpdate": "bridge_turn", "running": True})
+        self.turn(s)
         try:
             agent = await self.agent(s.agent)
             done = await agent.call("session/prompt", {
@@ -411,6 +449,7 @@ class Bridge:
             if kind == "agent_message_chunk" and u.get("content", {}).get("type") == "text":
                 said.append(u["content"].get("text", ""))
         words = " ".join("".join(reversed(said)).split())
+        self.turn(s)
         notice = {"event": "done", "agent": s.agent, "sessionId": s.id, "cwd": s.cwd, "title": s.name(),
                   "words": words if len(words) <= 200 else words[:199].rstrip() + "…"}
         if error:
@@ -418,6 +457,13 @@ class Bridge:
         self.done[(s.agent, s.id)] = notice
         for client in self.alerted:
             client.tell(notice)
+
+    def turn(self, s: Session) -> None:
+        event = {"event": "turn", "agent": s.agent, "sessionId": s.id, "running": s.running}
+        if s.running and s.doing:
+            event["doing"] = s.doing
+        for client in self.alerted:
+            client.tell(event)
 
     def seen(self, key: tuple[str, str]) -> None:
         if self.done.pop(key, None):

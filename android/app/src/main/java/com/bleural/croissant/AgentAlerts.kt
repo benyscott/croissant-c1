@@ -21,6 +21,9 @@ data class AgentAlert(val agent: String, val session: String, val cwd: String, v
     val folder get() = cwd.trimEnd('/').substringAfterLast('/').ifEmpty { cwd }
 }
 
+/** What a session shows on the Agents pages, most pressing first. */
+enum class SessionMark { Asking, Done, Running, None }
+
 /** A turn that ended in a session not on screen: the conversation's [title], the start of what the agent said ([words]). */
 data class AgentDone(val agent: String, val session: String, val cwd: String, val title: String, val words: String, val error: String?) {
     val key get() = "$agent/$session"
@@ -49,6 +52,21 @@ class AgentAlerts(
     private val _list = MutableStateFlow<List<AgentAlert>>(emptyList())
     val list: StateFlow<List<AgentAlert>> = _list.asStateFlow()
 
+    private val _running = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** The sessions ("agent/session") a turn of which runs on the bridge now, each with what it is doing ("running npm test"). */
+    val running: StateFlow<Map<String, String>> = _running.asStateFlow()
+
+    /** What a session has to show: asking you, a reply not seen, a turn running, or nothing. */
+    fun markOf(agent: String, session: String): SessionMark {
+        val key = "$agent/$session"
+        return when {
+            _list.value.any { it.agent == agent && it.session == session } -> SessionMark.Asking
+            _done.value.any { it.key == key } -> SessionMark.Done
+            key in _running.value.keys -> SessionMark.Running
+            else -> SessionMark.None
+        }
+    }
+
     private val _done = MutableStateFlow<List<AgentDone>>(emptyList())
     val done: StateFlow<List<AgentDone>> = _done.asStateFlow()
 
@@ -72,6 +90,8 @@ class AgentAlerts(
                     val d = o.optJSONArray("done") ?: JSONArray()
                     val ended = (0 until d.length()).map { done(d.getJSONObject(it)) }.filter { !shown(it) }
                     val before = _list.value.map { it.key }.toSet() + _done.value.map { it.key }
+                    val r = o.optJSONArray("running") ?: JSONArray()
+                    _running.value = (0 until r.length()).associate { r.getJSONObject(it).let { x -> "${x.optString("agent")}/${x.optString("sessionId")}" to x.optString("doing") } }
                     _list.value = now
                     _done.value = ended
                     if (now.any { it.key !in before } || ended.any { it.key !in before }) heard()
@@ -93,6 +113,7 @@ class AgentAlerts(
         client.close()
         _list.value = emptyList()
         _done.value = emptyList()
+        _running.value = emptyMap()
         start()
     }
 
@@ -136,6 +157,10 @@ class AgentAlerts(
                 if (shown(d)) return
                 _done.update { l -> l.filter { it.key != d.key } + d }
                 heard()
+            }
+            "turn" -> {
+                val key = "${e.optString("agent")}/${e.optString("sessionId")}"
+                _running.update { if (e.optBoolean("running")) it + (key to e.optString("doing")) else it - key }
             }
             "seen" -> _done.update { l -> l.filter { it.key != "${e.optString("agent")}/${e.optString("sessionId")}" } }
         }

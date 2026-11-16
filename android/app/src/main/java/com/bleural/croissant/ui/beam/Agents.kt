@@ -1,5 +1,12 @@
 package com.bleural.croissant.ui.beam
 
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +52,8 @@ import com.bleural.croissant.Agents
 import com.bleural.croissant.AgentsUi
 import com.bleural.croissant.BridgeReach
 import com.bleural.croissant.Core
+import androidx.compose.ui.graphics.Color
+import com.bleural.croissant.SessionMark
 import com.bleural.croissant.audio.Sound
 import com.bleural.croissant.net.parseAcpLink
 import com.bleural.croissant.net.plain
@@ -298,8 +307,7 @@ private fun AgentsBridgePage(core: Core, nav: NavState) {
 /**
  * An agent's sessions (`session/list` through the bridge) by their folders, each folder a card, the
  * newest first (decided 2026-10-21): its name, the age of its newest session at the end (now while
- * one runs), that session's title under it, a yellow dot before the age while one of them waits on
- * you. The wheel's card lifts and takes the agent's hue. A card opens its folder
+ * one runs), that session's title under it, its most pressing session's [MarkDot] before the age. The wheel's card lifts and takes the agent's hue. A card opens its folder
  * ([AgentFolderPage]). An agent the bridge's computer cannot run yet has, in their place, what it
  * needs there, in the bridge's own words.
  */
@@ -317,13 +325,15 @@ private fun AgentSessionsPage(agent: String, core: Core, nav: NavState) {
     val waiting = sessionsWaiting(info, ui.host, s, onRetry = { core.agents.sessions(agent) })
     if (waiting != null || s == null) return LinesPage(name, look.ramp, waiting.orEmpty(), nav::pop)
     val folders = remember(s.list) { Agents.folders(s.list) }
+    val mark = rememberMarks(core)
     val rows = rememberRows(folders.size, nav::pop, itemOf = { it + 1 })
     PageTop(name, look.ramp) {
         ShelfList(rows, look.ramp) {
             item { Spacer(Modifier.height(8.px)) }
             items(folders.size, key = { folders[it].cwd }) { i ->
                 val f = folders[i]
-                FolderCard(f, look, focused = rows.focus == i, onOpen = { rows.focus = i; nav.push(Screen.AgentFolder(agent, f.cwd)) })
+                val m = f.sessions.map { mark(agent, it.id) }.minOrNull() ?: SessionMark.None
+                FolderCard(f, look, m, focused = rows.focus == i, onOpen = { rows.focus = i; nav.push(Screen.AgentFolder(agent, f.cwd)) })
             }
             item { Spacer(Modifier.height(24.px)) }
         }
@@ -343,10 +353,10 @@ private fun sessionsWaiting(info: AgentInfo?, host: String?, s: AgentSessions?, 
 
 /** A folder's card (`ag2Stack`): 108 high in the surface, radius 28, 12 apart; focused, 116 by 460, 4 out on every side, in the hue, its words black. */
 @Composable
-private fun FolderCard(f: AgentFolder, look: AgentLook, focused: Boolean, onOpen: () -> Unit) {
+private fun FolderCard(f: AgentFolder, look: AgentLook, mark: SessionMark, focused: Boolean, onOpen: () -> Unit) {
     val lift by animateFloatAsState(if (focused) 1f else 0f, tween(LIFT_MS), label = "lift")
     val newest = f.sessions.firstOrNull()
-    val age = if (f.sessions.any { it.running }) "now" else Agents.age(newest?.updatedAt)
+    val age = if (mark == SessionMark.Running) "now" else Agents.age(newest?.updatedAt)
     val ink = lerp(INK, GROUND, lift)
     val sub = lerp(SUB, GROUND.copy(alpha = 0.6f), lift)
     val out = (4f * lift).px
@@ -357,7 +367,7 @@ private fun FolderCard(f: AgentFolder, look: AgentLook, focused: Boolean, onOpen
         ) {
             Row(Modifier.fillMaxWidth().paddingFromBaseline(top = (46f + 4f * lift).px), verticalAlignment = Alignment.CenterVertically) {
                 Text(f.name, style = BeamType.Select, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                if (f.sessions.any { it.asking }) WaitingDot(Modifier.padding(start = 16.px, end = 12.px), onHue = lift > 0.5f)
+                MarkDot(mark, look.hue, Modifier.padding(start = 16.px, end = 12.px), onHue = lift > 0.5f)
                 if (age != null) Text(age, style = BeamType.Value, color = sub, maxLines = 1, modifier = Modifier.padding(start = 16.px))
             }
             Text(newest?.title ?: "untitled", style = BeamType.Value, color = sub, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -366,19 +376,48 @@ private fun FolderCard(f: AgentFolder, look: AgentLook, focused: Boolean, onOpen
     }
 }
 
-/** A session waiting on you (a permission): a yellow dot, r 7; on the hue, ringed in black. */
+/**
+ * A session's [SessionMark], 16 across: waiting on you, a yellow dot (on the hue, ringed in
+ * black); a reply not seen, a dot in the agent's [hue]; a turn running, a dotted ring in it,
+ * turning once every 1.2 s. On the hue, the last two are black. Nothing for none.
+ */
 @Composable
-private fun WaitingDot(modifier: Modifier = Modifier, onHue: Boolean = false) {
-    Canvas(modifier.size(14.px)) {
-        drawCircle(ASKING)
-        if (onHue) drawCircle(GROUND, style = Stroke(3f / 14f * size.width))
+private fun MarkDot(mark: SessionMark, hue: Color, modifier: Modifier = Modifier, onHue: Boolean = false) {
+    if (mark == SessionMark.None) return
+    val ink = if (onHue) GROUND else hue
+    val turn = if (mark == SessionMark.Running) rememberInfiniteTransition(label = "spin")
+        .animateFloat(0f, 360f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "spin") else null
+    Canvas(modifier.size(16.px)) {
+        when (mark) {
+            SessionMark.Asking -> { drawCircle(ASKING); if (onHue) drawCircle(GROUND, style = Stroke(3f / 16f * size.width)) }
+            SessionMark.Done -> drawCircle(ink)
+            SessionMark.Running -> {
+                val w = 3.px.toPx()
+                val radius = size.width / 2 - w / 2
+                // Eight dashes round the ring: the circumference in sixteen equal parts, every other one drawn.
+                val part = (2 * Math.PI * radius / 16).toFloat()
+                rotate(turn?.value ?: 0f) {
+                    drawCircle(ink, radius = radius, style = Stroke(w, cap = StrokeCap.Round, pathEffect = PathEffect.dashPathEffect(floatArrayOf(part * 0.4f, part * 1.6f))))
+                }
+            }
+            SessionMark.None -> {}
+        }
     }
+}
+
+/** What each session shows ([AgentAlerts.markOf]), read again whenever the bridge tells of a change. */
+@Composable
+private fun rememberMarks(core: Core): (String, String) -> SessionMark {
+    val a by core.agentAlerts.list.collectAsStateWithLifecycle()
+    val d by core.agentAlerts.done.collectAsStateWithLifecycle()
+    val r by core.agentAlerts.running.collectAsStateWithLifecycle()
+    return remember(a, d, r) { { agent, session -> core.agentAlerts.markOf(agent, session) } }
 }
 
 /**
  * One of an agent's folders: its name the header word, new chat first (a + and its words), then
- * its sessions, newest first, each its title over its age (now while it runs) or, after a yellow
- * dot, "waiting on you". The wheel's row is in the hue. A session opens its conversation
+ * its sessions, newest first, each its title with its [MarkDot] at the end, over "waiting on you",
+ * what its turn is doing while it runs ("running npm test"), else its age. The wheel's row is in the hue. A session opens its conversation
  * (AgentChat.kt); new chat, a blank one in the folder (AgentNewPage).
  */
 @Composable
@@ -389,6 +428,8 @@ private fun AgentFolderPage(agent: String, cwd: String, core: Core, nav: NavStat
     val r = agentLook(agent).ramp
     val sessions = remember(ui.sessions[agent]) { Agents.folders(ui.sessions[agent]?.list.orEmpty()).firstOrNull { it.cwd == cwd }?.sessions.orEmpty() }
     val rows = rememberRows(sessions.size + 1, nav::pop, itemOf = { it + 1 })
+    val mark = rememberMarks(core)
+    val doing by core.agentAlerts.running.collectAsStateWithLifecycle()
     val word = cwd.trimEnd('/').substringAfterLast('/').ifEmpty { cwd }
     PageTop(word, r) {
         ShelfList(rows, r) {
@@ -406,13 +447,18 @@ private fun AgentFolderPage(agent: String, cwd: String, core: Core, nav: NavStat
                 val on = rows.focus == i + 1
                 Column(Modifier.fillMaxWidth().height(SESSION_H.px).tappable { rows.focus = i + 1; nav.push(Screen.AgentChat(agent, x.id, x.cwd)) }
                     .padding(horizontal = 24.px)) {
-                    Text(x.title ?: "untitled", style = if (on) BeamType.RowFocused else BeamType.Row, color = if (on) r.hue else r.ink,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.paddingFromBaseline(top = 44.px))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (x.asking) WaitingDot(Modifier.padding(end = 10.px))
-                        Text(if (x.asking) "waiting on you" else if (x.running) "now" else Agents.age(x.updatedAt).orEmpty(),
-                            style = BeamType.Value, color = r.sub, maxLines = 1, modifier = Modifier.paddingFromBaseline(top = 38.px))
+                    val m = mark(agent, x.id)
+                    Row(Modifier.paddingFromBaseline(top = 44.px), verticalAlignment = Alignment.CenterVertically) {
+                        Text(x.title ?: "untitled", style = if (on) BeamType.RowFocused else BeamType.Row, color = if (on) r.hue else r.ink,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        MarkDot(m, r.hue, Modifier.padding(start = 12.px))
                     }
+                    Text(when (m) {
+                        SessionMark.Asking -> "waiting on you"
+                        SessionMark.Running -> doing["$agent/${x.id}"]?.ifBlank { null } ?: "working"
+                        else -> Agents.age(x.updatedAt).orEmpty()
+                    }, style = BeamType.Value, color = r.sub, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.paddingFromBaseline(top = 38.px))
                 }
             }
             item { Spacer(Modifier.height(24.px)) }
