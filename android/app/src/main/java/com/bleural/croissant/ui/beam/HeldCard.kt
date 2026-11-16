@@ -97,9 +97,10 @@ internal fun HeldCard(
     inserts: kotlinx.coroutines.flow.Flow<String> = kotlinx.coroutines.flow.emptyFlow(),
     windowMs: Long = 2_000L, onCancel: () -> Unit = {}, onEdit: () -> Unit = {}, onSendEdited: (String) -> Unit = {},
     onEditSoon: () -> Unit = {}, onCancelSoon: () -> Unit = {}, onSendNow: () -> Unit = {},
+    onEditedByVoice: (String) -> Unit = {},
 ) {
     if (held is Held.Pending) return PendingCard(held.words, hue, windowMs, onCancel, onEdit, onSendNow)
-    if (held is Held.Editing) return EditingCard(held.words, hue, inserts, onCancel, onSendEdited)
+    if (held is Held.Editing) return EditingCard(held.words, hue, inserts, onCancel, onSendEdited, onEditedByVoice)
     val fill = when (held) {
         is Held.Heard -> GROUND
         is Held.Sending -> hue
@@ -223,11 +224,12 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
 
 /** A hold's words typed over on the keys, the grace window stopped: send them as they are now, or cancel. */
 @Composable
-private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.flow.Flow<String>, onCancel: () -> Unit, onSend: (String) -> Unit) {
+private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.flow.Flow<String>, onCancel: () -> Unit, onSend: (String) -> Unit, onEditedByVoice: (String) -> Unit) {
     val state = remember { TextFieldState(words) }
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { requester.requestFocus() }
-    // A hold while editing: its words go in where the cursor is (over the selection), spaced from what is either side.
+    // A hold while editing: its words go in where the cursor is (over the selection), spaced from
+    // what is either side; then, as after any hold, the whole goes back to the grace window.
     LaunchedEffect(Unit) {
         inserts.collect { said ->
             state.edit {
@@ -238,6 +240,7 @@ private fun EditingCard(words: String, hue: Color, inserts: kotlinx.coroutines.f
                 replace(at, selection.max, put)
                 selection = androidx.compose.ui.text.TextRange(at + put.length - after.length)
             }
+            onEditedByVoice(state.text.toString())
         }
     }
     val r = remember(hue) { ramp(hue) }

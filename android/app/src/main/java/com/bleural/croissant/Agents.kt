@@ -256,6 +256,16 @@ class Agents(private val scope: CoroutineScope, private val bridge: () -> Prefs.
         send(p)
     }
 
+    /**
+     * The editor's words once a hold put more in at its cursor: out of the editor and into the
+     * grace window again, as after any hold (edit or cancel, else they are sent). Blank, dropped.
+     */
+    fun editedByVoice(words: String) {
+        waiting?.cancel()
+        _chat.update { it?.copy(pending = null, editing = false, editSoon = false, cancelSoon = false) }
+        if (words.isNotBlank()) say(words.trim())
+    }
+
     /** The words as typed over, sent now; blank, nothing is sent. */
     fun sendEdited(words: String) {
         waiting?.cancel()

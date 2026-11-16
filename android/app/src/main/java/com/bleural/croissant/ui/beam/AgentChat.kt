@@ -98,7 +98,7 @@ internal fun AgentNewPage(agent: String, cwd: String, core: Core, nav: NavState)
                 }
             } else HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts,
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
-                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
+                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow, onEditedByVoice = core.agents::editedByVoice)
             Spacer(Modifier.height(40.px))
         }
         TopFade(r, scroll)
@@ -197,7 +197,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
                         if (held != null) {
                             HeldCard(held, r.hue, core.level::value, onRetry = core.agents::retry, away = "the bridge did not answer", inserts = core.agents.inserts,
                 windowMs = core.agents.sendDelayMs, onCancel = core.agents::cancelPending, onEdit = core.agents::editPending, onSendEdited = core.agents::sendEdited,
-                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow)
+                onEditSoon = core.agents::editSoon, onCancelSoon = core.agents::cancelSoon, onSendNow = core.agents::sendNow, onEditedByVoice = core.agents::editedByVoice)
                             Spacer(Modifier.height(16.px))
                         }
                         // Room for the folder key at the foot, so the last line is never under it.
