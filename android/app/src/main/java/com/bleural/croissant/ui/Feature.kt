@@ -32,11 +32,13 @@ enum class Feature(val word: String, val hue: Color) {
     /** Coding agents on a computer running acp-bridge (Agents.kt). Beam's alone too, before Atelier in its room. */
     Agents("Agents", Hue.Agents),
     /** A shell on the computer running acp-bridge (Terminal.kt). Beam's alone, after Agents in its room. */
-    Terminal("Terminal", Hue.Terminal);
+    Terminal("Terminal", Hue.Terminal),
+    /** Linear's issues and projects, read only (linear/Linear.kt). Beam's alone, after the Terminal in its room. */
+    Linear("Linear", Hue.Linear);
 
     companion object {
-        /** The room every design but Beam has: every feature but [Atelier], [Agents] and [Terminal], in order. */
-        val room: List<Feature> = entries - Atelier - Agents - Terminal
+        /** The room every design but Beam has: every feature but [Atelier], [Agents], [Terminal] and [Linear], in order. */
+        val room: List<Feature> = entries - Atelier - Agents - Terminal - Linear
     }
 
     val glyph: ImageVector
@@ -55,6 +57,7 @@ enum class Feature(val word: String, val hue: Color) {
             Atelier -> Glyphs.Atelier
             Agents -> Glyphs.Agents
             Terminal -> Glyphs.Terminal
+            Linear -> Glyphs.Linear
         }
 }
 
@@ -72,6 +75,7 @@ val Screen.feature: Feature?
         is Screen.TranslatorLanguages, Screen.TranslatorSaved -> Feature.Translator
         Screen.WeatherPlaces, Screen.WeatherAdd -> Feature.Weather
         Screen.AtelierAdd, Screen.AtelierScan, is Screen.AtelierApp, is Screen.AtelierInfo -> Feature.Atelier
+        Screen.LinearKey, is Screen.LinearProject, is Screen.LinearIssue -> Feature.Linear
         Screen.AgentsPair, Screen.AgentsBridge, is Screen.AgentSessions, is Screen.AgentFolder, is Screen.AgentChat, is Screen.AgentNew, is Screen.AgentFiles, is Screen.AgentFile -> Feature.Agents
         else -> Feature.Settings
     }

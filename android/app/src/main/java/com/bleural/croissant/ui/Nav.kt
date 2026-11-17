@@ -164,6 +164,12 @@ sealed interface Screen {
     data class AgentChat(val agent: String, val session: String, val cwd: String) : Screen
     /** A new chat of an agent in the folder [cwd], from its header's +: a hold there starts it, and the page becomes its conversation. */
     data class AgentNew(val agent: String, val cwd: String) : Screen
+    /** Linear's key: typed, tried against Linear and kept only if it works. */
+    data object LinearKey : Screen
+    /** A Linear project: its phases (milestones) and the issues under each. */
+    data class LinearProject(val id: String) : Screen
+    /** A Linear issue in full. */
+    data class LinearIssue(val id: String) : Screen
     /** An Atelier app's page: the app runs while it is up. */
     data class AtelierApp(val id: String) : Screen
     /** An Atelier app's info: where it came from, what it may use, delete. */

@@ -57,6 +57,7 @@ internal fun Opened(f: Feature, d: PanelDeps, core: Core, onGallery: () -> Unit)
         Feature.Atelier -> AtelierRoute(d, core)
         Feature.Agents -> AgentsRoute(d, core)
         Feature.Terminal -> TerminalRoute(d, core)
+        Feature.Linear -> LinearRoute(d, core)
     }
 }
 
@@ -82,6 +83,7 @@ internal fun BeamPage(screen: Screen, core: Core, nav: NavState, transforming: M
         Feature.Atelier -> AtelierPages(screen, core, nav)
         Feature.Agents -> AgentsPages(screen, core, nav)
         Feature.Terminal -> Unit
+        Feature.Linear -> LinearPages(screen, core, nav)
         // Home is the room, drawn by the shell, its day in place on it (HomeDay.kt).
         null -> Unit
         // History is the one page pushed over Ask; nothing is pushed over the Camera.

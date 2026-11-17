@@ -226,6 +226,13 @@ object Glyphs {
             stroke("M2 14h2M20 14h2M15 13v2M9 13v2")
         }
     }
+    /** Linear: a board, three columns of issues in a square (Lucide's square-kanban). */
+    val Linear by lazy {
+        glyph("linear") {
+            stroke(rect(3f, 3f, 18f, 18f, 2f))
+            stroke("M8 7v7M12 7v4M16 7v9")
+        }
+    }
     /** Down to the newest line (Lucide's arrow-down). */
     val ArrowDown by lazy { glyph("arrow_down") { stroke("M12 5v14M19 12l-7 7-7-7") } }
     /** A folder (Lucide's): a session's files, from its conversation. */

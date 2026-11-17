@@ -117,6 +117,8 @@ object Hue {
     val Agents = Color(0xFF4CF2B8)
     /** The Terminal's phosphor green. */
     val Terminal = Color(0xFF00FF41)
+    /** Linear's, a light indigo. */
+    val Linear = Color(0xFFA5ADFF)
 }
 
 private fun grotesk(size: Int, height: Int, weight: FontWeight, spacing: Double = 0.0) = Grotesk.copy(

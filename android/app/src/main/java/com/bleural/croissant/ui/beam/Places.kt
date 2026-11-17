@@ -10,7 +10,7 @@ import com.bleural.croissant.ui.Place
  * room's list ([beamRoom]), which is what the room's `pos` counts, the side wheel's discs and
  * Home's dots; a feature's ordinal is not its place.
  */
-internal val PLACES: List<Feature> = Feature.room.filter { it != Feature.Settings } + Feature.Agents + Feature.Terminal + Feature.Atelier + Feature.Settings
+internal val PLACES: List<Feature> = Feature.room.filter { it != Feature.Settings } + Feature.Agents + Feature.Terminal + Feature.Linear + Feature.Atelier + Feature.Settings
 
 /** How many of the places last opened the wheel shows above Ask (2026-10-17). */
 internal const val RECENTS = 3
