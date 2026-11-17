@@ -253,7 +253,7 @@ private fun Room(room: RoomState, d: PanelDeps, core: Core, home: HomeState) {
     Box(
         Modifier.fillMaxSize()
             .drawBehind { drawRect(groundAt(room, apps)) }
-            .roomGestures(room, wheel = WHEEL, menuAt = { x, y -> rimAt(room, x, y) ?: tileAt(room, home, x, y) }),
+            .roomGestures(room, wheel = WHEEL, menuAt = { x, y -> rimAt(room, x, y) }),
     ) {
         SideWheelRoom(room, apps, lines, live)
         HomeLayer(room) { Home(room, d, apps, home) }
