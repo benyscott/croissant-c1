@@ -321,7 +321,7 @@ private fun PendingCard(words: String, hue: Color, windowMs: Long, onCancel: () 
         }
         Spacer(Modifier.height(20.px))
         Row(Modifier.fillMaxWidth()) {
-            Pill("cancel", GROUND, DANGER, Modifier.border(2.px, DANGER, RoundedCornerShape(23.px))) { Cues.play(Sound.Destroy); onCancel() }
+            Pill("cancel", DANGER, GROUND) { Cues.play(Sound.Destroy); onCancel() }
             Spacer(Modifier.weight(1f))
             Pill("send", hue, GROUND) { Cues.play(Sound.Commit); onSend() }
         }

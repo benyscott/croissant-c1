@@ -24,6 +24,16 @@ internal fun beamRecents(recents: List<String>, apps: List<InstalledApp>): List<
     recents.mapNotNull(Place::of).filter { here(it, apps) }.distinct().take(RECENTS).reversed()
 
 /**
+ * The switcher's list (Switcher.kt, 2026-11-16): every place Core keeps ([com.bleural.croissant.WheelKeep.KEEP]),
+ * newest first, but [current], Ask and a place Beam has not. The agents are one app with Agents.
+ */
+internal fun switcherRecents(recents: List<String>, apps: List<InstalledApp>, current: Place?): List<Place> =
+    recents.mapNotNull(Place::of).filter { here(it, apps) && !sameApp(it, current) }.distinct()
+
+private fun sameApp(a: Place, b: Place?): Boolean =
+    b != null && (a == b || (a.feature == Feature.Agents && b.feature == Feature.Agents))
+
+/**
  * Beam's room as laid out (2026-10-17): [top], the recents, above Ask, then [PLACES] with the
  * [agents] pinned to the wheel after Agents and the apps after Atelier, each in pin order. A
  * recent whose app has gone or is off drops out; a pinned app too, until it is on again. Ask is

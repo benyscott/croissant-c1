@@ -138,22 +138,33 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
     // The room's places (Places.kt, 2026-10-17): laid out again on Home, arrived, and at the
     // start, with the recents as they are then, so the room under a hand never shifts. Away from
     // Home a pin or an app going or coming re-lays all but the recents, which stay as laid.
+    // With the switcher on (Switcher.kt) the recents are its, and Ask is first.
     LaunchedEffect(room) {
         val onHome = snapshotFlow { room.homeTarget > 0.5f && room.home > 0.99f }
         combine(onHome, core.recents, core.pins, core.atelier.apps, core.agentPins) { h, r, p, a, g ->
-            val top = if (h) beamRecents(r, a) else room.places.take(room.entry)
+            val top = if (SWITCHER_ON) emptyList() else if (h) beamRecents(r, a) else room.places.take(room.entry)
             beamRoom(top, p, a, g)
         }.collect { places -> room.lay(places, places.indexOf(Place.Of(Feature.Ask))) }
+    }
+    // The pages each place was left on, so the switcher goes back to them: kept while the room is
+    // on the place and every page over it is the place's own (not a settings page the control
+    // centre opened over an agent's chat).
+    val leftOn = remember { mutableMapOf<String, List<Screen>>() }
+    LaunchedEffect(room) {
+        snapshotFlow { if (room.openTarget > 0.5f && room.homeTarget < 0.5f) room.lastPlace to nav.stack.drop(1) else null }
+            .collect { at -> at?.let { (p, pages) -> if (pages.all { it.feature == p.feature }) leftOn[p.key] = pages } }
     }
     val sheet = remember { SheetState() }
     val transforming = remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val control = remember { ControlState(scope) }
+    val switcher = remember { SwitcherState(scope) }
+    val recents by core.recents.collectAsStateWithLifecycle()
     val alerts by core.agentAlerts.list.collectAsStateWithLifecycle()
     val done by core.agentAlerts.done.collectAsStateWithLifecycle()
     // Anything that changes what is under them puts the control centre and the sheet away.
     val under by remember { derivedStateOf { Triple(nav.current, room.open > 0.5f, room.home > 0.5f) } }
-    LaunchedEffect(under) { control.close(null) }
+    LaunchedEffect(under) { control.close(null); switcher.close(null) }
     // The control centre and the sheet take the ramp of what is under them: the page on top
     // (an Atelier app's, its own hue), Home's, or the panel or feature the room is on.
     val apps = core.atelier.apps.collectAsStateWithLifecycle()
@@ -176,7 +187,10 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
     Box(Modifier.fillMaxSize().tapAwayClosesKeys(keyboard, focus)) {
         OwnKeyboard(keyboard) {
             CompositionLocalProvider(LocalSheet provides sheet, LocalOpenSetup provides core::openSetup, LocalLayerVisible provides !setupCovers.value) {
-                Box(Modifier.fillMaxSize().padding(bottom = keys).controlEdge(control)) {
+                Box(
+                    Modifier.fillMaxSize().padding(bottom = keys).controlEdge(control)
+                        .switcherEdge(switcher, enabled = { SWITCHER_ON && !keyboard.open && control.shown.value == 0f }) { goHome(nav, room) },
+                ) {
                     Slides(nav) { screen ->
                         if (screen == Screen.Home) Room(room, panels, core, home) else BeamPage(screen, core, nav, transforming)
                     }
@@ -201,6 +215,10 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
                     onOpenDone = { d -> core.agentAlerts.seen(d); control.close(null); openFromNotice(nav, d.agent, d.session, d.cwd) },
                     onDismissDone = { d -> core.agentAlerts.seen(d); if (alerts.size + done.size <= 1) control.close(null) },
                 )
+            }
+            if (SWITCHER_ON) BeamSwitcher(switcher, switcherRecents(recents, apps.value, here(nav, room)), apps.value, underRamp) { p ->
+                switcher.close(null)
+                openPlace(nav, room, p, leftOn)
             }
             BeamSheetHost(sheet, under, underRamp)
             Box(Modifier.fillMaxSize().padding(bottom = keys)) { BeamSetup(core, device, setupCovers) }
@@ -240,6 +258,46 @@ private fun Room(room: RoomState, d: PanelDeps, core: Core, home: HomeState) {
         // The camera's photos key opens Photos in place of the camera, as a jump of the room.
         OpenedLayer(room) { f -> Opened(f, d, core, onGallery = { room.goTo(room.placeOf(Feature.Photos)); Cues.play(Sound.ScreenIn) }) }
     }
+}
+
+/** The switcher's short swipe: Home, from wherever, the pages over the room gone with it. */
+private fun goHome(nav: NavState, room: RoomState) {
+    if (!nav.canPop && room.homeTarget > 0.5f) return
+    nav.home()
+    room.goHome()
+    Cues.play(Sound.MenuOut)
+}
+
+/** What is in front, for the switcher to leave out: an app's or an agent's page, else the place the room is on; null on Home. */
+private fun here(nav: NavState, room: RoomState): Place? = when (val s = nav.current) {
+    is Screen.AtelierApp -> Place.App(s.id)
+    is Screen.AgentSessions -> Place.Agent(s.agent)
+    is Screen.AgentFolder -> Place.Agent(s.agent)
+    is Screen.AgentChat -> Place.Agent(s.agent)
+    is Screen.AgentNew -> Place.Agent(s.agent)
+    else -> if (room.homeTarget > 0.5f && !nav.canPop) null else room.lastPlace
+}
+
+/**
+ * A recent from the switcher: the room on its place (an agent or an app not pinned to the wheel,
+ * on Agents or Atelier, and its page over it), opened, and the pages it was left on put back.
+ */
+private fun openPlace(nav: NavState, room: RoomState, p: Place, leftOn: Map<String, List<Screen>>) {
+    val i = room.places.indexOf(p).takeIf { it >= 0 } ?: room.placeOf(p.feature)
+    if (i < 0) return
+    nav.home()
+    room.goTo(i)
+    room.leaveHome()
+    room.openPanel()
+    // An agent or an app shares its place with the others when it is not pinned: its own pages only.
+    val first: Screen? = when (p) {
+        is Place.Agent -> Screen.AgentSessions(p.id)
+        is Place.App -> Screen.AtelierApp(p.id).takeIf { room.places[i] != p }
+        is Place.Of -> null
+    }
+    val pages = leftOn[room.places[i].key].orEmpty()
+    (if (first == null || pages.firstOrNull() == first) pages else listOf(first)).forEach { nav.push(it, sound = null) }
+    Cues.play(Sound.ScreenIn)
 }
 
 /**

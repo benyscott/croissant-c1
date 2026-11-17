@@ -60,4 +60,16 @@ class PlacesTest {
         val room = beamRoom(laid, emptyList(), apps.filter { it.id != "water" })
         assertEquals(1, room.indexOf(Place.Of(Feature.Ask)))
     }
+
+    @Test fun theSwitcherHasEveryRecentButTheOneInFront() {
+        val keys = listOf("Settings", "agent:claude", "Ask", WheelKeep.app("off"), "Weather", "Timers", "Calendar", "Photos")
+        assertEquals(
+            listOf(Place.Agent("claude"), Place.Of(Feature.Weather), Place.Of(Feature.Timers), Place.Of(Feature.Calendar), Place.Of(Feature.Photos)),
+            switcherRecents(keys, apps, Place.Of(Feature.Settings)),
+        )
+    }
+
+    @Test fun inAgentsTheAgentsAreLeftOut() {
+        assertEquals(listOf(Place.Of(Feature.Settings)), switcherRecents(listOf("agent:claude", "Settings", "Agents"), apps, Place.Of(Feature.Agents)))
+    }
 }
