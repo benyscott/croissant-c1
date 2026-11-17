@@ -91,11 +91,19 @@ private const val VOLUME_X = 32
 private const val DISPLAY_X = 116
 private const val KEYS_LEFT = 296f
 private const val KEYS_RIGHT = 406f
-private const val KEYS_TOP = 117f
-private const val KEYS_MID = 227f
-private const val KEYS_BOTTOM = 337f
-/** The signal bars' top: in the 75 px over the keys, clear of their tops at 75. */
-private const val BARS_TOP = 28f
+// Two rows, 110 apart, on the levels' middle (227).
+private const val KEYS_TOP = 172f
+private const val KEYS_BOTTOM = 282f
+/** The top line's middle: the time, the signal and the battery, over the levels at 70. */
+private const val TOP_MID = 39f
+/** The battery: a 40 x 20 body and a 3 x 8 nub, its right 32 clear of the edge. */
+private const val BATT_W = 40f
+private const val BATT_H = 20f
+private const val NUB_W = 3f
+private const val NUB_H = 8f
+private const val BATT_X = 480f - 32f - BATT_W - NUB_W
+/** The signal bars' gap to the battery. */
+private const val BARS_GAP = 16f
 
 /** A level's segments: eight, 56 x 22, 30 apart, the top one at y 86, the bottom one ending at 318. */
 private const val SEGMENTS = 8
@@ -111,14 +119,14 @@ private const val LEVEL_GLYPH = 336f
  * The control centre, with the room's pull and state ([ControlState]): the page
  * under it dimmed to 10% (black at 90%) and what it holds sliding down from the top. Sound and
  * Display as two levels of eight stacked segments (56 x 22, 8 apart, lit white from the bottom,
- * from y 86 to 318) with their glyphs under them at 336; six round keys of 84 to their right,
- * 110 apart both ways, centred on 117, 227 and 337: Wi-Fi and Bluetooth, the tailnet and Sound,
- * the battery and Power. Wi-Fi, Bluetooth, the tailnet and Sound are white with a black glyph
- * when on and a grey ring when off; Power a red ring; the battery its level as a ring (white,
- * green while it charges, red when low) round the percent. Everything 32 px clear of the sides.
- * A tap or a drag on a level sets it (a muted volume's segments are grey); a tap on Wi-Fi,
- * Bluetooth or the tailnet flips it and a long press opens its page; Sound mutes; the battery
- * opens Battery; Power offers Sleep, Restart and Power off through the sheet. A tap on the dark
+ * from y 86 to 318) with their glyphs under them at 336; four round keys of 84 to their right,
+ * 110 apart both ways, centred on 172 and 282: Wi-Fi and Bluetooth, Sound and Power. Wi-Fi,
+ * Bluetooth and Sound are white with a black glyph when on and a grey ring when off; Power a red
+ * ring. Over them a top line: the time at the left, the signal and the battery at the right
+ * ([BatteryMark]). Everything 32 px clear of the sides. The tailnet has no key: it stays on
+ * (2026-11-17; Settings > Tailscale still turns it). A tap or a drag on a level sets it (a muted
+ * volume's segments are grey); a tap on Wi-Fi or Bluetooth flips it and a long press opens its
+ * page; Sound mutes; the battery opens Battery; Power offers Sleep, Restart and Power off through the sheet. A tap on the dark
  * closes it, a drag on what it holds pushes it back. The wheel does nothing while it is open.
  *
  * It was 34 px lower, with four keys and a top bar of its own over the dark, until the top bar
@@ -172,32 +180,30 @@ internal fun BeamControlCenter(
                 .verticalScroll(scroll),
         ) {
         Box(Modifier.fillMaxWidth().height(PANEL.px)) {
-            // The time, centred over the keys, level with the signal bars.
-            Box(Modifier.fillMaxWidth().offset(y = (BARS_TOP + BARS_H / 2 - 20f).px).height(40.px), contentAlignment = Alignment.Center) {
+            // The top line: the time at the left; the signal and the battery at the right.
+            Box(Modifier.offset(x = VOLUME_X.px, y = (TOP_MID - 20f).px).height(40.px), contentAlignment = Alignment.CenterStart) {
                 Text(time, style = BeamType.Value, color = r.ink, maxLines = 1)
             }
+            // The signal left of the battery; nothing without a SIM in use.
+            device.cell?.let { cell ->
+                Canvas(Modifier.offset(x = (BATT_X - BARS_GAP - BARS_W).px, y = (TOP_MID - BARS_H / 2).px).size(BARS_W.px, BARS_H.px)) {
+                    cellBars(cell, 0f, 0f, size.width / BARS_W, r.ink, r.sub, r.deep)
+                }
+            }
+            BatteryMark(device, r, onClick = onOpenBattery)
             LevelKey(VOLUME_X, if (muted) Glyphs.SoundOff else Glyphs.Sound, volume, r, faded = muted) { if (muted) onMute(false); onVolume(it) }
             LevelKey(DISPLAY_X, Glyphs.Display, brightness, r, faded = false, onChange = onBrightness)
+            // Four keys (2026-11-17): the tailnet stays on, so its key went; the battery is the top line's.
             RoundKey(KEYS_LEFT, KEYS_TOP, Glyphs.Wifi, if (device.wifiEnabled) r.ink else null, r.sub, r, onClick = {
                 Links.touched(); onWifi(!device.wifiEnabled); Cues.play(if (device.wifiEnabled) Sound.SwitchOff else Sound.SwitchOn)
             }, onLongClick = onOpenWifi)
             RoundKey(KEYS_RIGHT, KEYS_TOP, Glyphs.Bluetooth, if (device.bluetoothOn) r.ink else null, r.sub, r, onClick = {
                 onBluetooth(!device.bluetoothOn); Cues.play(if (device.bluetoothOn) Sound.SwitchOff else Sound.SwitchOn)
             }, onLongClick = onOpenBluetooth)
-            RoundKey(KEYS_LEFT, KEYS_MID, Glyphs.Tailnet, if (device.tailnetUp) r.ink else null, r.sub, r, onClick = {
-                onTailnet(!device.tailnetUp); Cues.play(if (device.tailnetUp) Sound.SwitchOff else Sound.SwitchOn)
-            }, onLongClick = onOpenTailnet)
             // Muting sounds its switch before the gain goes, unmuting after it is back: both are heard.
-            RoundKey(KEYS_RIGHT, KEYS_MID, if (muted) Glyphs.SoundOff else Glyphs.Sound, if (muted) null else r.ink, r.sub, r, onClick = {
+            RoundKey(KEYS_LEFT, KEYS_BOTTOM, if (muted) Glyphs.SoundOff else Glyphs.Sound, if (muted) null else r.ink, r.sub, r, onClick = {
                 if (muted) { onMute(false); Cues.play(Sound.SwitchOn) } else { Cues.play(Sound.SwitchOff); onMute(true) }
             })
-            BatteryKey(KEYS_LEFT, KEYS_BOTTOM, device, r, onClick = onOpenBattery)
-            // The signal over the keys, flush with their right edge; nothing without a SIM in use.
-            device.cell?.let { cell ->
-                Canvas(Modifier.offset(x = (KEYS_RIGHT + 42f - BARS_W).px, y = BARS_TOP.px).size(BARS_W.px, BARS_H.px)) {
-                    cellBars(cell, 0f, 0f, size.width / BARS_W, r.ink, r.sub, r.deep)
-                }
-            }
             RoundKey(KEYS_RIGHT, KEYS_BOTTOM, Glyphs.Power, null, r.danger, r, onClick = {
                 sheet.show(listOf(
                     SheetAction("sleep", r.ink, Glyphs.Moon) { state.close(null); onPower(PowerAction.Sleep) },
@@ -341,32 +347,35 @@ private fun RoundKey(cx: Float, cy: Float, glyph: ImageVector, fill: Color?, rin
 }
 
 /**
- * The battery as a key of the control centre, 84 across, centred on ([cx], [cy]): a 3 px ring
- * faint all round and lit clockwise from the top to the level, the percent in [BeamType.Value]
- * in its middle. White; green while it charges; the danger red, the percent too, at 15% and
- * under off the charger. Not read yet, the faint ring alone. A tap opens Battery.
+ * The battery at the top line's right, as a phone draws it (2026-11-17): a rounded body outlined
+ * in white with a nub at the right, filled from the left to the level, 2 px inside the outline.
+ * The fill white; green while it charges; the danger red at 15% and under off the charger. Not
+ * read yet, the outline alone. A tap opens Battery.
  */
 @Composable
-private fun BatteryKey(cx: Float, cy: Float, device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
+private fun BatteryMark(device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
     val pct = device.batteryPct
-    val low = pct in 0..15 && !device.charging
-    val lit = when {
+    val fill = when {
         device.charging -> Ink.Ok
-        low -> r.danger
+        pct in 0..15 -> r.danger
         else -> r.ink
     }
+    // The tap reaches 12 round it.
     Box(
-        Modifier.offset(x = (cx - 42f).px, y = (cy - 42f).px).size(84.px).clip(CircleShape).held(onClick, null),
-        contentAlignment = Alignment.Center,
+        Modifier.offset(x = (BATT_X - 12f).px, y = (TOP_MID - BATT_H / 2 - 12f).px)
+            .size((BATT_W + NUB_W + 24f).px, (BATT_H + 24f).px).held(onClick, null),
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val w = 3.px.toPx()
-            val inset = Offset(w / 2, w / 2)
-            val ring = Size(size.width - w, size.height - w)
-            drawArc(r.deep, 0f, 360f, false, inset, ring, style = Stroke(w))
-            if (pct >= 0) drawArc(lit, -90f, 360f * pct.coerceIn(0, 100) / 100f, false, inset, ring, style = Stroke(w, cap = StrokeCap.Round))
+        Canvas(Modifier.offset(12.px, 12.px).size((BATT_W + NUB_W).px, BATT_H.px)) {
+            val u = size.height / BATT_H
+            val line = 2f * u
+            drawRoundRect(r.sub, Offset(line / 2, line / 2), Size(BATT_W * u - line, BATT_H * u - line), CornerRadius(5f * u), style = Stroke(line))
+            drawRoundRect(r.sub, Offset(BATT_W * u, (BATT_H - NUB_H) / 2 * u), Size(NUB_W * u, NUB_H * u), CornerRadius(1.5f * u))
+            if (pct >= 0) {
+                val inner = 4f * u
+                val w = (BATT_W * u - 2 * inner) * pct.coerceIn(0, 100) / 100f
+                drawRoundRect(fill, Offset(inner, inner), Size(w, BATT_H * u - 2 * inner), CornerRadius(2f * u))
+            }
         }
-        if (pct >= 0) Text("$pct", style = BeamType.Value, color = if (low) r.danger else r.ink, maxLines = 1)
     }
 }
 
