@@ -83,6 +83,7 @@ import com.bleural.croissant.offline.OfflineVoice
 import com.bleural.croissant.esim.ActivationCode
 import com.bleural.croissant.esim.EsimRepo
 import com.bleural.croissant.esim.EsimTask
+import com.bleural.croissant.linear.Linear
 import com.bleural.croissant.metronome.Metronome
 import com.bleural.croissant.metronome.Tuner
 import com.bleural.croissant.net.ModelEntry
@@ -1166,6 +1167,9 @@ class Core(
 
     /** The Terminal: a shell on the paired bridge's computer, its socket open while its page is up ([Terminal.page]). */
     val terminal: Terminal by lazy { Terminal(scope, bridge = { acpBridge }) }
+
+    /** Linear, read only (linear/Linear.kt): its key sealed beside Ask's, in linear-key.json. */
+    val linear: Linear by lazy { Linear(scope, KeysStore(File(askFiles, "linear-key.json"), KeystoreSealer())) }
 
     /** Every permission the bridge waits on and every turn ended unseen, whatever page is up: the control centre shows them; a new one sounds. */
     val agentAlerts: AgentAlerts by lazy { AgentAlerts(scope, bridge = { acpBridge }, heard = { Cues.play(Sound.AnswerArrived) }, onScreen = { agents.chat.value?.key }) }
