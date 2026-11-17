@@ -131,7 +131,7 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
     val c = chat?.takeIf { it.agent == agent && it.session == session }
     val name = ui.agents.firstOrNull { it.id == agent }?.name ?: agent
     // Lazy, so a long session draws only what is in view: the wheel goes through it fast
-    // (ChatWheel, below), up at the top is the pull back.
+    // (ChatWheel, below: faster the longer it turns), up at the top is the pull back.
     val list = rememberLazyListState()
     val pull = rememberPull(nav::pop)
     val held = Held.of(voice, c?.sending, c?.unsent, c?.pending, c?.editing == true, c?.editSoon == true, c?.cancelSoon == true, typing)
@@ -247,29 +247,41 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
 }
 
 /**
- * The wheel through a conversation, fast: a tick is a [WHEEL_PARTS]th of it (one item at the
- * least), so a few turns go from the newest line to the first. Up at the very top is the pull
- * back. [onMoved] is told which way (up) and whether it came to the foot.
+ * The wheel through a conversation, faster the longer it turns: the first [WHEEL_EASY] ticks in a
+ * row (each within [WHEEL_STREAK_MS] of the last) go [WHEEL_STEP] as before; from then on each tick
+ * goes [WHEEL_GROWTH] times further than the one before, up to [WHEEL_MOST], so two or three ticks
+ * move a little and a long turn reaches the first line. Up at the very top is the pull back. [onMoved] is told which way (up) and whether it
+ * came to the foot.
  */
 @Composable
 private fun ChatWheel(list: LazyListState, pull: PullState, onMoved: (up: Boolean, atFoot: Boolean) -> Unit) {
     val scope = rememberCoroutineScope()
+    val unit = with(LocalDensity.current) { 1.px.toPx() }
+    val streak = remember { object { var at = 0L; var dir = 0; var ticks = 0; var step = WHEEL_STEP } }
     WheelTarget { delta ->
         if (delta < 0 && !list.canScrollBackward) pull.stepBack()
         else if (delta != 0) {
-            val first = list.firstVisibleItemIndex
-            val jump = (list.layoutInfo.totalItemsCount / WHEEL_PARTS).coerceAtLeast(1) * delta
-            // Up from part way into an item, its own top is the first step.
-            val to = (first + jump + (if (delta < 0 && list.firstVisibleItemScrollOffset > 0) 1 else 0)).coerceIn(0, foot(list))
-            scope.launch { list.scrollToItem(to) }
-            onMoved(delta < 0, to == foot(list))
+            val now = System.currentTimeMillis()
+            val dir = if (delta > 0) 1 else -1
+            streak.ticks = if (now - streak.at < WHEEL_STREAK_MS && dir == streak.dir) streak.ticks + 1 else 1
+            streak.step = if (streak.ticks <= WHEEL_EASY) WHEEL_STEP else (streak.step * WHEEL_GROWTH).coerceAtMost(WHEEL_MOST)
+            streak.at = now
+            streak.dir = dir
+            val by = streak.step * unit * delta
+            // A step of its own glides as before; once it speeds up, each jump is at once, so none is cut short by the next.
+            if (streak.step == WHEEL_STEP) scope.launch { list.animateScrollBy(by) } else list.dispatchRawDelta(by)
+            onMoved(delta < 0, !list.canScrollForward)
         }
         false
     }
 }
 
-/** How many ticks of the wheel go through a whole conversation. */
-private const val WHEEL_PARTS = 12
+/** The wheel's step (page px), the ticks in a row at that step, how much further each tick after them goes, the most a tick goes, and how close ticks are to be in a row. */
+private const val WHEEL_STEP = 96f
+private const val WHEEL_EASY = 3
+private const val WHEEL_GROWTH = 1.7f
+private const val WHEEL_MOST = 12_000f
+private const val WHEEL_STREAK_MS = 400L
 
 /** The foot's index: the last item, the list's end. */
 private fun foot(list: LazyListState): Int = (list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
