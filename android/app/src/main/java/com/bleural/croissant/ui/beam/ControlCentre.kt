@@ -44,6 +44,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Velocity
+import android.text.format.DateFormat
+import java.time.OffsetDateTime
 import com.bleural.croissant.AgentAlert
 import com.bleural.croissant.AgentDone
 import com.bleural.croissant.AskOption
@@ -59,7 +66,8 @@ import com.bleural.croissant.ui.PowerAction
 import com.bleural.croissant.ui.SheetAction
 import com.bleural.croissant.ui.SheetState
 import com.bleural.croissant.ui.WheelTarget
-import com.bleural.croissant.ui.controlDrag
+import com.bleural.croissant.ui.clock
+import com.bleural.croissant.ui.rememberMinuteTick
 import com.bleural.croissant.ui.held
 import com.bleural.croissant.ui.tappable
 import kotlin.math.ceil
@@ -86,6 +94,8 @@ private const val KEYS_RIGHT = 406f
 private const val KEYS_TOP = 117f
 private const val KEYS_MID = 227f
 private const val KEYS_BOTTOM = 337f
+/** The signal bars' top: in the 75 px over the keys, clear of their tops at 75. */
+private const val BARS_TOP = 28f
 
 /** A level's segments: eight, 56 x 22, 30 apart, the top one at y 86, the bottom one ending at 318. */
 private const val SEGMENTS = 8
@@ -143,14 +153,29 @@ internal fun BeamControlCenter(
     val sheet = LocalSheet.current
     // Whether it is on screen at all; the number itself is read in draw and layer blocks only.
     val showing by remember(state) { derivedStateOf { state.shown.value > 0f } }
+    val twentyFour = DateFormat.is24HourFormat(LocalContext.current)
+    val minute by rememberMinuteTick()
+    val time = remember(minute, twentyFour) { clock(OffsetDateTime.now(), twentyFour).lowercase() }
+    // The controls and the notices scroll as one (2026-11-17): a drag scrolls them, and what is
+    // left of an upward drag once they are at their end pushes the whole thing back, as a drag on
+    // the controls alone did before. Put away, it opens again at the top.
+    val scroll = rememberScrollState()
+    LaunchedEffect(state.open) { if (!state.open) scroll.scrollTo(0) }
+    val push = remember(state) { pushBack(state) }
     Box(Modifier.fillMaxSize()) {
         if (showing) Box(Modifier.fillMaxSize().drawBehind { drawRect(r.ground, alpha = 0.9f * state.shown.value) }.tappable { state.close() })
-        Box(
-            Modifier.fillMaxWidth().height(PANEL.px)
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = SCREEN_H.px)
                 .graphicsLayer { translationY = size.height * (state.shown.value - 1f) }
                 .onSizeChanged { state.height = it.height }
-                .controlDrag(state),
+                .nestedScroll(push)
+                .verticalScroll(scroll),
         ) {
+        Box(Modifier.fillMaxWidth().height(PANEL.px)) {
+            // The time, centred over the keys, level with the signal bars.
+            Box(Modifier.fillMaxWidth().offset(y = (BARS_TOP + BARS_H / 2 - 20f).px).height(40.px), contentAlignment = Alignment.Center) {
+                Text(time, style = BeamType.Value, color = r.ink, maxLines = 1)
+            }
             LevelKey(VOLUME_X, if (muted) Glyphs.SoundOff else Glyphs.Sound, volume, r, faded = muted) { if (muted) onMute(false); onVolume(it) }
             LevelKey(DISPLAY_X, Glyphs.Display, brightness, r, faded = false, onChange = onBrightness)
             RoundKey(KEYS_LEFT, KEYS_TOP, Glyphs.Wifi, if (device.wifiEnabled) r.ink else null, r.sub, r, onClick = {
@@ -167,6 +192,12 @@ internal fun BeamControlCenter(
                 if (muted) { onMute(false); Cues.play(Sound.SwitchOn) } else { Cues.play(Sound.SwitchOff); onMute(true) }
             })
             BatteryKey(KEYS_LEFT, KEYS_BOTTOM, device, r, onClick = onOpenBattery)
+            // The signal over the keys, flush with their right edge; nothing without a SIM in use.
+            device.cell?.let { cell ->
+                Canvas(Modifier.offset(x = (KEYS_RIGHT + 42f - BARS_W).px, y = BARS_TOP.px).size(BARS_W.px, BARS_H.px)) {
+                    cellBars(cell, 0f, 0f, size.width / BARS_W, r.ink, r.sub, r.deep)
+                }
+            }
             RoundKey(KEYS_RIGHT, KEYS_BOTTOM, Glyphs.Power, null, r.danger, r, onClick = {
                 sheet.show(listOf(
                     SheetAction("sleep", r.ink, Glyphs.Moon) { state.close(null); onPower(PowerAction.Sleep) },
@@ -175,14 +206,11 @@ internal fun BeamControlCenter(
                 ))
             })
         }
-        // What waits on you, under the keys, sliding with them: a permission of any session, then turns that ended.
-        if (showing && (alerts.isNotEmpty() || done.isNotEmpty())) Column(
-            Modifier.offset(y = PANEL.px).fillMaxWidth().heightIn(max = (SCREEN_H - PANEL).px)
-                .graphicsLayer { translationY = state.height * (state.shown.value - 1f); alpha = state.shown.value }
-                .verticalScroll(rememberScrollState()),
-        ) {
+        // What waits on you, under the keys, scrolling with them: a permission of any session, then turns that ended.
+        if (showing) {
             alerts.forEach { a -> AlertCard(a, onOpen = { onOpenAlert(a) }, onPick = { o -> onPickAlert(a, o) }) }
             done.forEach { d -> DoneCard(d, onOpen = { onOpenDone(d) }, onDismiss = { onDismissDone(d) }) }
+        }
         }
         // Closed, a dot at the top right says something waits, in the hue of its agent: pull down to see it.
         val first = alerts.firstOrNull()?.agent ?: done.firstOrNull()?.agent
@@ -191,8 +219,32 @@ internal fun BeamControlCenter(
     if (state.open) WheelTarget { false }
 }
 
-/** The screen's height in page px: what is left under the keys holds the alerts. */
+/** The screen's height in page px: the most the controls and the notices under them take. */
 private const val SCREEN_H = 640f
+
+/**
+ * The control centre's drag, now that the controls scroll with the notices: what the scroll
+ * leaves of an upward drag (it is at its end, or there is nothing to scroll) pushes the panel
+ * back; while it is partly back, a downward drag brings it down before anything scrolls; the
+ * finger lifting settles it as [ControlState.release] does.
+ */
+private fun pushBack(state: ControlState) = object : NestedScrollConnection {
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (source != NestedScrollSource.UserInput || available.y <= 0f || state.shown.value >= 1f) return Offset.Zero
+        state.drag(available.y)
+        return Offset(0f, available.y)
+    }
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        if (source != NestedScrollSource.UserInput || available.y >= 0f) return Offset.Zero
+        state.drag(available.y)
+        return Offset(0f, available.y)
+    }
+    override suspend fun onPreFling(available: Velocity): Velocity {
+        if (state.shown.value >= 1f) return Velocity.Zero
+        state.release()
+        return available
+    }
+}
 
 /**
  * Who a notice is from, over it: the folder and the agent in grey, the conversation's title in

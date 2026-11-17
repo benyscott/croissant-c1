@@ -98,6 +98,9 @@ private const val DAY_CROISSANT_X = 392f
 private const val DAY_CROISSANT_TOP = 26f
 private const val DAY_CROISSANT_W = 124f
 private const val DAY_CROISSANT_INK = 5f
+// The signal bars (CellBars.kt) on Home: 32 clear of the right edge, from 24.
+private const val BARS_X = 480f - 32f - BARS_W
+private const val BARS_Y = 24f
 /** Around the croissant in its corner, what a tap there takes as the croissant. */
 private const val DAY_CROISSANT_REACH = 12f
 
@@ -172,6 +175,8 @@ internal fun Home(room: RoomState, d: PanelDeps, apps: List<InstalledApp>, home:
                         dateLine(text, dateOf(now), temp, glyph, r, p)
                         clockAt(text, now, twentyFour, r, p)
                         homeDots(dots, apps, groups, p)
+                        // The signal, top right, only with a SIM in use; gone as the croissant takes that corner.
+                        d.device.cell?.let { if (p < 1f) cellBars(it, BARS_X, BARS_Y, 1f, r.ink, r.sub, r.deep, alpha = 1f - p) }
                         if (p > 0f) drawDay(text, day, groups, { g -> ((p - GROUP_FROM - g * GROUP_STAGGER) / GROUP_OVER).coerceIn(0f, 1f) }, r)
                     }
                 }
