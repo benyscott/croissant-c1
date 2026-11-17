@@ -31,6 +31,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -96,11 +100,12 @@ private const val KEYS_TOP = 172f
 private const val KEYS_BOTTOM = 282f
 /** The top line's middle: the time, the signal and the battery, over the levels at 70. */
 private const val TOP_MID = 39f
-/** The battery: a 40 x 20 body and a 3 x 8 nub, its right 32 clear of the edge. */
-private const val BATT_W = 40f
-private const val BATT_H = 20f
+/** The battery: a 50 x 28 body and a 3 x 10 nub, its right 32 clear of the edge; the level in it at 22. */
+private const val BATT_W = 50f
+private const val BATT_H = 28f
 private const val NUB_W = 3f
-private const val NUB_H = 8f
+private const val NUB_H = 10f
+private val BATT_TYPE = BeamType.Value.copy(fontSize = 22f.pxSp, fontWeight = FontWeight.Medium, letterSpacing = 0f.pxSp)
 private const val BATT_X = 480f - 32f - BATT_W - NUB_W
 /** The signal bars' gap to the battery. */
 private const val BARS_GAP = 16f
@@ -347,10 +352,11 @@ private fun RoundKey(cx: Float, cy: Float, glyph: ImageVector, fill: Color?, rin
 }
 
 /**
- * The battery at the top line's right, as a phone draws it (2026-11-17): a rounded body outlined
- * in white with a nub at the right, filled from the left to the level, 2 px inside the outline.
- * The fill white; green while it charges; the danger red at 15% and under off the charger. Not
- * read yet, the outline alone. A tap opens Battery.
+ * The battery at the top line's right, as a phone draws it (2026-11-18): a rounded body outlined
+ * in grey with a nub at the right, filled from the left to the level, the level's number in its
+ * middle without a percent sign, black over the fill and white past it. The fill white; green
+ * while it charges; the danger red at 15% and under off the charger. Not read yet, the outline
+ * alone. A tap opens Battery. The number is 22, under the kit's 26, as it has to fit the body.
  */
 @Composable
 private fun BatteryMark(device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
@@ -360,6 +366,7 @@ private fun BatteryMark(device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
         pct in 0..15 -> r.danger
         else -> r.ink
     }
+    val text = rememberTextMeasurer()
     // The tap reaches 12 round it.
     Box(
         Modifier.offset(x = (BATT_X - 12f).px, y = (TOP_MID - BATT_H / 2 - 12f).px)
@@ -368,13 +375,17 @@ private fun BatteryMark(device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
         Canvas(Modifier.offset(12.px, 12.px).size((BATT_W + NUB_W).px, BATT_H.px)) {
             val u = size.height / BATT_H
             val line = 2f * u
-            drawRoundRect(r.sub, Offset(line / 2, line / 2), Size(BATT_W * u - line, BATT_H * u - line), CornerRadius(5f * u), style = Stroke(line))
-            drawRoundRect(r.sub, Offset(BATT_W * u, (BATT_H - NUB_H) / 2 * u), Size(NUB_W * u, NUB_H * u), CornerRadius(1.5f * u))
-            if (pct >= 0) {
-                val inner = 4f * u
-                val w = (BATT_W * u - 2 * inner) * pct.coerceIn(0, 100) / 100f
-                drawRoundRect(fill, Offset(inner, inner), Size(w, BATT_H * u - 2 * inner), CornerRadius(2f * u))
-            }
+            val bw = BATT_W * u
+            drawRoundRect(r.sub, Offset(line / 2, line / 2), Size(bw - line, size.height - line), CornerRadius(7f * u), style = Stroke(line))
+            drawRoundRect(r.sub, Offset(bw, (BATT_H - NUB_H) / 2 * u), Size(NUB_W * u, NUB_H * u), CornerRadius(1.5f * u))
+            if (pct < 0) return@Canvas
+            val inner = 4f * u
+            val edge = inner + (bw - 2 * inner) * pct.coerceIn(0, 100) / 100f
+            drawRoundRect(fill, Offset(inner, inner), Size(edge - inner, size.height - 2 * inner), CornerRadius(3f * u))
+            val laid = text.measure("$pct", BATT_TYPE)
+            val at = Offset((bw - laid.size.width) / 2, (size.height - laid.size.height) / 2)
+            clipRect(right = edge) { drawText(laid, r.ground, at) }
+            clipRect(left = edge) { drawText(laid, r.ink, at) }
         }
     }
 }
