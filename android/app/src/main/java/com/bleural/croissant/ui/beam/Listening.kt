@@ -39,13 +39,13 @@ private const val BUTTON_X = 480f + CORE * (1f - 2f * SHOWN)
  * 150 ms; it takes no touches.
  */
 @Composable
-internal fun ListeningGlow(voice: VoiceState) {
+internal fun ListeningGlow(voice: VoiceState, agent: String) {
     val on = voice.dictate && voice.phase == Phase.Listening
     val shown by animateFloatAsState(if (on) 1f else 0f, tween(150), label = "listening")
     if (shown == 0f) return
     val ring by rememberInfiniteTransition(label = "listening")
         .animateFloat(0f, 1f, infiniteRepeatable(tween(RING_MS, easing = LinearEasing)), label = "ring")
-    val hue = agentLook("claude").hue
+    val hue = agentLook(agent).hue
     Canvas(Modifier.fillMaxSize()) {
         pageScale {
             val c = Offset(BUTTON_X, BUTTON_Y)

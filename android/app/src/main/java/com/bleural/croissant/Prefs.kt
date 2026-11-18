@@ -60,6 +60,7 @@ object Prefs {
     private const val KEY_WHEEL_AGENTS = "wheel_agents"
     private const val KEY_SOUND_PACK = "sound_pack"
     private const val KEY_BACKUP_LAST = "backup_last"
+    private const val KEY_BRAIN_AGENT = "brain_agent"
 
     /**
      * The emulator reaches the Mac on the host-loopback alias. An R1 has no server until its
@@ -234,6 +235,10 @@ object Prefs {
      * The server's chat default as it last said it (`GET /providers`), an entry's id: what a
      * hold that picks no chat model gets, before the server has been asked since the start.
      */
+    /** The bridge agent a side-button hold goes to (SideBrain): an agent's id, Claude Code until one is picked. */
+    fun brainAgent(ctx: Context): String = sp(ctx).getString(KEY_BRAIN_AGENT, null)?.takeIf { it.isNotEmpty() } ?: "claude"
+    fun setBrainAgent(ctx: Context, id: String) { sp(ctx).edit().putString(KEY_BRAIN_AGENT, id).apply() }
+
     fun chatDefault(ctx: Context): String? = sp(ctx).getString(KEY_CHAT_DEFAULT, null)?.takeIf { it.isNotEmpty() }
     fun setChatDefault(ctx: Context, id: String?) {
         sp(ctx).edit().apply { if (id.isNullOrEmpty()) remove(KEY_CHAT_DEFAULT) else putString(KEY_CHAT_DEFAULT, id) }.apply()

@@ -279,7 +279,8 @@ private fun agentsLines(ui: AgentsUi, onAgent: (String) -> Unit, onRetry: () -> 
 /**
  * The bridges paired (2026-10-21): each computer by its own name, the one in use ticked with
  * the address it answered on, one at a time, never two mixed. A tap on another uses it
- * instead; then pair another computer; forget takes the one in use off the R1.
+ * instead; then pair another computer; forget takes the one in use off the R1. Under "side
+ * button", the bridge's agents, the one a side-button hold goes to ticked.
  */
 @Composable
 private fun AgentsBridgePage(core: Core, nav: NavState) {
@@ -294,6 +295,14 @@ private fun AgentsBridgePage(core: Core, nav: NavState) {
                 act = { if (!inUse) { Cues.play(Sound.Commit); core.useAcpBridge(b.token) } }))
         }
         add(AgentLine.Row("pair", "pair another", gap = true, act = { nav.push(Screen.AgentsPair) }))
+        // Which of its agents a side-button hold goes to (SideBrain); one it cannot run is dim and stays unpicked.
+        if (ui.agents.isNotEmpty()) add(AgentLine.Label("side button"))
+        ui.agents.forEach { a ->
+            val picked = a.id == core.brainAgent
+            add(AgentLine.Row("brain-${a.id}", a.name, value = if (a.ready) null else "not set up", dim = !a.ready,
+                mark = if (picked) Glyphs.Check else null,
+                act = { if (a.ready && !picked) { Cues.play(Sound.Commit); core.pickBrainAgent(a.id) } }))
+        }
     }
     Box(Modifier.fillMaxSize()) {
         LinesPage("bridges", AGENTS, lines, nav::pop)

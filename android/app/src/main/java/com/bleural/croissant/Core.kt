@@ -465,6 +465,7 @@ class Core(
         modelPicks = picks()
         serverDefault = Prefs.chatDefault(activity)
         liveWordsSet = Prefs.liveWords(activity)
+        brainAgent = Prefs.brainAgent(activity)
         acpBridges = Prefs.acpBridges(activity)
         acpBridge = acpBridges.firstOrNull { it.token == Prefs.acpActive(activity) } ?: acpBridges.firstOrNull() ?: Prefs.AcpBridge()
         agentAlerts.start()
@@ -1237,12 +1238,19 @@ class Core(
     // ---- the brain (SideBrain) ---------------------------------------------------
 
     /**
-     * A hold no page takes goes to the brain instead of Ask: Claude Code in the brain's folder,
+     * A hold no page takes goes to the brain instead of Ask: [brainAgent] in the brain's folder,
      * over the paired bridge, its words with the same grace window as any agent's chat. Within
      * [BRAIN_WINDOW_MS] of the last words there it continues that session, else a new one.
      * With no bridge paired, Ask answers as before.
      */
-    private val brainAgent = "claude"
+    /** The bridge agent the brain runs on, picked on the bridge page (Agents, bridge); Claude Code until then. */
+    var brainAgent by mutableStateOf("claude")
+        private set
+
+    fun pickBrainAgent(id: String) {
+        brainAgent = id
+        Prefs.setBrainAgent(activity, id)
+    }
     private val brainCwd = "~/Code/sidebrain/agent"  // the bridge expands ~ on its own computer
     private val BRAIN_WINDOW_MS = 5 * 60_000L
 

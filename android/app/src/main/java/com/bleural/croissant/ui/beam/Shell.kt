@@ -231,7 +231,7 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
             Box(Modifier.fillMaxSize().padding(bottom = keys)) { BeamSetup(core, device, setupCovers) }
         }
         // The mic taking words for a page: an orange glow at the side button (Listening.kt).
-        ListeningGlow(panels.voice)
+        ListeningGlow(panels.voice, core.brainAgent)
         BeamRinging(ringing, core::dismissRing, onSettle = room::snap)
         // An update installing: over everything, a ringing timer included (Update.kt).
         BeamUpdateLock(core)

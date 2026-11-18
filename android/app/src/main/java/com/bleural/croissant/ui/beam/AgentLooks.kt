@@ -37,6 +37,8 @@ private val LOOKS = mapOf(
     "hermes" to AgentLook(Color(0xFFF2F2F2), Glyphs.Feather),
     // Pi's own mint.
     "pi" to AgentLook(Color(0xFF4CF2B8), Glyphs.Pi),
+    // Mistral's yellow.
+    "vibe" to AgentLook(Color(0xFFFFC93C), Glyphs.Tones),
 )
 
 private val DEFAULT by lazy { AgentLook(AGENTS.hue, Glyphs.Agents) }
