@@ -263,6 +263,8 @@ class VoiceService : Service() {
 
     /** The tape recorder: fed every capture chunk, writes while recording. */
     val recorder by lazy { Recorder(Stores.recordings(this)) }
+    /** Plays a tape back; on with the screen off, as a recording is. */
+    val player by lazy { com.bleural.croissant.audio.TapePlayer(this) }
     /** Sends a recording for transcription on a tap of Transcribe, never on its own: to the Mac, or to a cloud model from here. */
     val transcriber by lazy {
         Transcriber(Stores.recordings(this), scope, speech = { holdSpeech() }) { Prefs.server(this) }
@@ -411,7 +413,7 @@ class VoiceService : Service() {
     private fun busy(): Boolean {
         val p = _state.value.phase
         return (p != Phase.Idle && p != Phase.Error) || streaming || answering.get() > 0 || working() ||
-            recorder.state.value.phase != RecPhase.Idle || tap != null || _ringing.value.isNotEmpty() || updating
+            recorder.state.value.phase != RecPhase.Idle || player.state.value.playing || tap != null || _ringing.value.isNotEmpty() || updating
     }
 
     /** An update installing (Core): nothing rests or sleeps until it is done. */
@@ -450,6 +452,7 @@ class VoiceService : Service() {
         capture?.stop()
         // The process going: what was recorded is kept and says it was cut short.
         recorder.stop(RecordingMeta.INTERRUPTED)
+        player.stop()
         tone?.stop()
         ringLock?.let { if (it.isHeld) it.release() }
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -536,6 +539,8 @@ class VoiceService : Service() {
         holdJob = null
         holdJob = scope.launch {
             delay(HOLD_THRESHOLD_MS)
+            // A hold talks over nothing: a tape playing pauses.
+            player.pause()
             beginUtterance()
         }
     }

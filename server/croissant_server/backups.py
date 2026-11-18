@@ -33,7 +33,7 @@ import re
 import shutil
 import zipfile
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -74,6 +74,9 @@ def _echo(value: Any) -> str:
 
 
 class Backups:
+    # What one upload is called in the texts the C1 shows; tapes.py says "tape".
+    what = "backup"
+
     def __init__(self, folder: Path, max_bytes: int, chunk_bytes: int, manifest_bytes: int,
                  now: Callable[[], datetime] = datetime.now):
         self.folder = folder
@@ -162,7 +165,7 @@ class Backups:
         except OSError as e:
             await self._turn_away(ws, self._os_text(e))
         except ConnectionClosed as e:
-            log.info("backup upload cancelled: %s", e)
+            log.info("%s upload cancelled: %s", self.what, e)
         else:
             log.info("saved %s in %s", name, self.folder)
             try:
@@ -173,7 +176,7 @@ class Backups:
                 log.warning("saved %s, but the C1 left before it was told", name)
 
     async def _turn_away(self, ws: ServerConnection, why: str) -> None:
-        log.warning("backup refused: %s", why)
+        log.warning("%s refused: %s", self.what, why)
         try:
             await ws.send(json.dumps({"type": "error", "error": why}))
             await ws.close()
@@ -182,8 +185,8 @@ class Backups:
 
     async def _store(self, ws: ServerConnection) -> str:
         """The upload's bytes into a backup of their own; its name. Any way out but this drops the part."""
-        size, expected = self._begin(await ws.recv())
-        name, out = self._claim(size)
+        size, expected, begin = self._begin(await ws.recv())
+        name, out = self._claim(size, begin)
         part = self.folder / f"{name}.part"
         kept = False
         try:
@@ -194,7 +197,7 @@ class Backups:
                 await asyncio.to_thread(os.fsync, out.fileno())
             final = self.folder / name
             if final.exists():   # only if one was put there by hand while this arrived
-                raise Refused(f"{name} appeared in {self.folder} while the backup was arriving")
+                raise Refused(f"{name} appeared in {self.folder} while the {self.what} was arriving")
             part.rename(final)
             kept = True
         finally:
@@ -203,8 +206,8 @@ class Backups:
                 log.info("dropped %s", part.name)
         return name
 
-    def _begin(self, frame: str | bytes) -> tuple[int, str]:
-        """The size and the sha256 (lower case) a `begin` frame announces."""
+    def _begin(self, frame: str | bytes) -> tuple[int, str, dict[str, Any]]:
+        """The size and the sha256 (lower case) a `begin` frame announces, and the frame."""
         if isinstance(frame, bytes):
             raise Refused(f"the first frame has to be a begin message in text, got {len(frame)} binary bytes")
         try:
@@ -217,12 +220,21 @@ class Backups:
         if type(size) is not int or size < 1:
             raise Refused(f"begin needs a size in bytes of at least 1, got {_echo(size)}")
         if size > self.max_bytes:
-            raise Refused(f"the backup is {size} bytes, over the {self.max_bytes} bytes this server takes")
+            raise Refused(f"the {self.what} is {size} bytes, over the {self.max_bytes} bytes this server takes")
         if not isinstance(sha, str) or SHA256.fullmatch(sha) is None:
             raise Refused(f"begin needs a sha256 of 64 hex characters, got {_echo(sha)}")
-        return size, sha.lower()
+        return size, sha.lower(), msg
 
-    def _claim(self, size: int) -> tuple[str, BinaryIO]:
+    def _names(self, begin: dict[str, Any]) -> Iterator[str]:
+        """The names to try for an upload arriving now, in order: the stamp, then `-2`, `-3`, ..."""
+        stamp = self.now().strftime(STAMP)
+        yield f"{stamp}.zip"
+        n = 2
+        while True:
+            yield f"{stamp}-{n}.zip"
+            n += 1
+
+    def _claim(self, size: int, begin: dict[str, Any]) -> tuple[str, BinaryIO]:
         """
         The first free name for a backup arriving now, with its `.part` open (mode 600). A part
         left by a crash holds its name, so the next backup takes the following suffix.
@@ -230,11 +242,8 @@ class Backups:
         self.folder.mkdir(mode=0o700, parents=True, exist_ok=True)
         free = shutil.disk_usage(self.folder).free
         if free < size:
-            raise Refused(f"the disk on this machine is full: {free} bytes free, the backup is {size} bytes")
-        stamp = self.now().strftime(STAMP)
-        n = 1
-        while True:
-            name = f"{stamp}.zip" if n == 1 else f"{stamp}-{n}.zip"
+            raise Refused(f"the disk on this machine is full: {free} bytes free, the {self.what} is {size} bytes")
+        for name in self._names(begin):
             if not (self.folder / name).exists():
                 try:
                     # O_EXCL: two uploads in the same minute cannot take the same name.
@@ -242,7 +251,7 @@ class Backups:
                     return name, os.fdopen(fd, "wb")
                 except FileExistsError:
                     pass
-            n += 1
+        raise Refused("no free name")
 
     async def _take(self, ws: ServerConnection, out: BinaryIO, size: int, expected: str) -> None:
         """The chunks into [out], each answered, until [size] bytes have come; then the hash."""
@@ -270,6 +279,7 @@ class Backups:
 
     @staticmethod
     def _damaged(got: int, got_sha: str, size: int, expected: str) -> str:
+        # "backup" for tapes too: the C1 reads this text (BackupWire.DAMAGED).
         return (f"the backup arrived damaged: {got} bytes, sha256 {got_sha}, "
                 f"expected {size} bytes, sha256 {expected}")
 
@@ -277,4 +287,4 @@ class Backups:
         """[after] says how far the bytes had come, when they had."""
         if e.errno == errno.ENOSPC:
             return f"the disk on this machine is full{after}: {e}"
-        return f"could not write the backup in {self.folder}{after}: {e}"
+        return f"could not write the {self.what} in {self.folder}{after}: {e}"

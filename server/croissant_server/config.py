@@ -33,6 +33,8 @@ LAN_TOKEN_PATH = Path.home() / ".croissant" / "lan-token"
 
 # Where a C1's backups are kept (backups.py), in the same ~/.croissant.
 BACKUPS_DIR = Path.home() / ".croissant" / "backups"
+# Where a C1's tapes sent whole are kept (tapes.py): in the open, for the owner to find.
+TAPES_DIR = Path.home() / "R1 Tapes"
 
 
 def _local_ipv4() -> list[str]:
@@ -246,6 +248,10 @@ class Config:
     backup_chunk_bytes: int = 1024 * 1024
     # The most of a zip's manifest.json that is read to list it.
     backup_manifest_max_bytes: int = 1024 * 1024
+    # The folder a C1's tapes go to (tapes.py), and the most one may be: 16 kHz mono WAV is
+    # 115 MB an hour, so 8 GB is about seventy hours.
+    tapes_dir: Path = TAPES_DIR
+    tape_max_bytes: int = 8 * 1024 ** 3
 
     def image(self, name: str | None = None, options: dict | None = None) -> ImageModel:
         """

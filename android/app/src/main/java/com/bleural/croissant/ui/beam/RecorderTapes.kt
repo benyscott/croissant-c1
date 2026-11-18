@@ -2,6 +2,7 @@ package com.bleural.croissant.ui.beam
 
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +30,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.AlignmentLine
 import androidx.compose.ui.layout.LastBaseline
 import androidx.compose.ui.layout.layout
@@ -41,6 +43,7 @@ import com.bleural.croissant.Core
 import com.bleural.croissant.TranscribeState
 import com.bleural.croissant.TxPhase
 import com.bleural.croissant.audio.Cues
+import com.bleural.croissant.audio.PlayerState
 import com.bleural.croissant.audio.Sound
 import com.bleural.croissant.data.Recording
 import com.bleural.croissant.data.lengthClock
@@ -49,6 +52,7 @@ import com.bleural.croissant.data.paragraphs
 import com.bleural.croissant.data.stampText
 import com.bleural.croissant.send.Offer
 import com.bleural.croissant.send.Share
+import com.bleural.croissant.send.TapeSend
 import com.bleural.croissant.ui.Feature
 import com.bleural.croissant.ui.Glyphs
 import com.bleural.croissant.ui.LibraryLine
@@ -62,6 +66,7 @@ import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * The Recorder's pushed pages: the tapes, one tape, renaming it. Each unpacks from [core] only
@@ -78,8 +83,12 @@ internal fun RecorderPages(screen: Screen, core: Core, nav: NavState) {
         is Screen.Recording -> {
             val items by core.recordings.items.collectAsStateWithLifecycle()
             val transcribing by core.transcribing.collectAsStateWithLifecycle()
+            val player by core.player.collectAsStateWithLifecycle()
+            val toMac by core.tapeToMac.state.collectAsStateWithLifecycle()
             TapePage(
                 File(screen.path), items, transcribing,
+                player = player, position = core::tapePositionMs, onPlay = core::playTape, onSeek = core::seekTape,
+                toMac = toMac, onToMac = core::sendTapeToMac,
                 onTranscribe = core::transcribe,
                 onSend = { nav.push(Screen.SendTape(it.path)) },
                 onDelete = { core.deleteRecording(it); nav.pop(Sound.Destroy) },
@@ -174,6 +183,12 @@ internal fun TapePage(
     file: File,
     items: List<Recording>,
     inFlight: TranscribeState?,
+    player: PlayerState,
+    position: () -> Long,
+    onPlay: (File) -> Unit,
+    onSeek: (Float) -> Unit,
+    toMac: TapeSend?,
+    onToMac: (File) -> Unit,
     onTranscribe: (File) -> Unit,
     onSend: (File) -> Unit,
     onDelete: (File) -> Unit,
@@ -198,6 +213,14 @@ internal fun TapePage(
     val transcribed = rec.meta?.transcribed == true
     val (scroll, pull) = rememberWordsScroll(onBack)
     var asking by remember { mutableStateOf(false) }
+    // This tape in the player: where it is, read twice a second while it is loaded.
+    val loaded = player.file == file
+    var at by remember { mutableStateOf(0L) }
+    LaunchedEffect(loaded, player.playing) {
+        at = position()
+        while (loaded && player.playing) { delay(500); at = position() }
+    }
+    val mac = toMac?.takeIf { it.file == file }
     Box(Modifier.fillMaxSize()) {
         PageTop("recorder", r) {
             Column(Modifier.fillMaxSize().elasticPull(pull, r.ink, r.ground).verticalScroll(scroll).padding(bottom = 140.px)) {
@@ -208,12 +231,29 @@ internal fun TapePage(
                     Meter({ f.progress }, r, Modifier.padding(start = 24.px, end = 24.px, top = 20.px).endAtBaseline())
                 }
                 f?.error?.let { TapeWords(it, BeamType.Body, r.danger, UNDER_TITLE) }
+                if (loaded) {
+                    val d = player.durationMs.coerceAtLeast(1L)
+                    TapeWords("${if (player.playing) "playing" else "paused"} ${lengthClock(at)} / ${lengthClock(player.durationMs)}", BeamType.Label, r.hue, UNDER_TITLE)
+                    // A tap on the meter goes to that point of the tape.
+                    Meter({ at.toFloat() / d }, r, Modifier.padding(start = 24.px, end = 24.px, top = 20.px).endAtBaseline()
+                        .pointerInput(Unit) { detectTapGestures { o -> onSeek(o.x / size.width); at = (d * (o.x / size.width)).toLong() } })
+                }
+                if (mac != null) {
+                    when {
+                        mac.going -> {
+                            TapeWords("to the mac", BeamType.Label, r.hue, UNDER_TITLE)
+                            Meter({ mac.progress }, r, Modifier.padding(start = 24.px, end = 24.px, top = 20.px).endAtBaseline())
+                        }
+                        mac.kept != null -> TapeWords("on the mac: ${mac.kept}", BeamType.Label, r.sub, UNDER_TITLE)
+                        else -> TapeWords(mac.error.orEmpty(), BeamType.Body, r.danger, UNDER_TITLE)
+                    }
+                }
                 paras.forEachIndexed { i, p ->
                     // A minute's label 58 under the title's details or the state above it, 46
                     // under the paragraph before; its words 42 under it, 42 a line.
                     val gap = when {
                         i > 0 -> UNDER_PARAGRAPH
-                        f != null && f.error == null -> UNDER_METER
+                        (f != null && f.error == null) || loaded || mac?.going == true -> UNDER_METER
                         else -> UNDER_TITLE
                     }
                     TapeWords(stampText(p.start), BeamType.Label, r.sub, gap)
@@ -221,7 +261,9 @@ internal fun TapePage(
                 }
             }
             val trash: () -> Unit = { asking = true; Cues.play(Sound.SheetIn) }
-            DangerKey(Glyphs.Trash, r, trash, slot = 1)
+            DangerKey(Glyphs.Trash, r, trash, slot = 3)
+            QuietKey(Glyphs.Laptop, r, { onToMac(file) }, slot = 2, enabled = mac?.going != true)
+            QuietKey(if (loaded && player.playing) Glyphs.Pause else Glyphs.Play, r, { onPlay(file) }, slot = 1)
             if (transcribed && !busy) KnobKey(Glyphs.Send, r, { onSend(file) })
             else KnobKey(Glyphs.Text, r, { onTranscribe(file) }, enabled = !busy)
         }
