@@ -58,7 +58,7 @@ import com.bleural.croissant.ui.roomGestures
  * (Timers.kt).
  */
 @Composable
-internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeState) {
+internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeState, lock: LockFace) {
     val panels = panelDeps(core, nav, closePanel = room::closePanel)
     val device = panels.device
     val ringing by core.ringing.collectAsStateWithLifecycle()
@@ -159,6 +159,10 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
     val scope = rememberCoroutineScope()
     val control = remember { ControlState(scope) }
     val switcher = remember { SwitcherState(scope) }
+    // Home left, or a page opened over it, any way but the unlock: the lock's place is forgotten.
+    LaunchedEffect(room) {
+        snapshotFlow { room.homeTarget < 0.5f || nav.canPop }.collect { away -> if (away) lock.forget() }
+    }
     val recents by core.recents.collectAsStateWithLifecycle()
     val alerts by core.agentAlerts.list.collectAsStateWithLifecycle()
     val done by core.agentAlerts.done.collectAsStateWithLifecycle()
@@ -189,7 +193,10 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
             CompositionLocalProvider(LocalSheet provides sheet, LocalOpenSetup provides core::openSetup, LocalLayerVisible provides !setupCovers.value) {
                 Box(
                     Modifier.fillMaxSize().padding(bottom = keys).controlEdge(control)
-                        .switcherEdge(switcher, enabled = { SWITCHER_ON && !keyboard.open && control.shown.value == 0f }) { goHome(nav, room) },
+                        .switcherEdge(
+                            switcher, enabled = { SWITCHER_ON && !keyboard.open && control.shown.value == 0f },
+                            locked = { lock.held && room.homeTarget > 0.5f && !nav.canPop }, onUnlock = { lock.unlock() },
+                        ),
                 ) {
                     Slides(nav) { screen ->
                         if (screen == Screen.Home) Room(room, panels, core, home) else BeamPage(screen, core, nav, transforming)
@@ -260,14 +267,6 @@ private fun Room(room: RoomState, d: PanelDeps, core: Core, home: HomeState) {
         // The camera's photos key opens Photos in place of the camera, as a jump of the room.
         OpenedLayer(room) { f -> Opened(f, d, core, onGallery = { room.goTo(room.placeOf(Feature.Photos)); Cues.play(Sound.ScreenIn) }) }
     }
-}
-
-/** The switcher's short swipe: Home, from wherever, the pages over the room gone with it. */
-private fun goHome(nav: NavState, room: RoomState) {
-    if (!nav.canPop && room.homeTarget > 0.5f) return
-    nav.home()
-    room.goHome()
-    Cues.play(Sound.MenuOut)
 }
 
 /** What is in front, for the switcher to leave out: an app's or an agent's page, else the place the room is on; null on Home. */

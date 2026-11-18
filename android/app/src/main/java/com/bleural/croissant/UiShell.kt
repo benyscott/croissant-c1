@@ -76,6 +76,12 @@ interface UiShell {
     fun settle()
 
     /**
+     * The side button's short press, or Sleep, is putting the device to sleep: a lock, not the
+     * screen timing out. A design may keep where it is and show its Home on waking.
+     */
+    fun locked() {}
+
+    /**
      * The screen has just woken (and on the first start). Whatever this shows is on the
      * first frame seen: it lands before the panel is lit.
      */

@@ -1419,7 +1419,7 @@ class Core(
     private var pttSpent = false
 
     private val handler = Handler(Looper.getMainLooper())
-    private val sleepSoon = Runnable { Kiosk.sleep(activity) }
+    private val sleepSoon = Runnable { ui.locked(); Kiosk.sleep(activity) }
 
     /** The activity is stopped, which every sleep does: the screen is off. */
     private var asleep = false
@@ -1686,7 +1686,7 @@ class Core(
 
     // None of them while an update installs.
 
-    fun sleep() { if (!updating) Kiosk.sleep(activity) }
+    fun sleep() { if (!updating) { ui.locked(); Kiosk.sleep(activity) } }
 
     fun reboot() { if (!updating) Kiosk.reboot(activity) }
 
