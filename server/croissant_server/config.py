@@ -33,8 +33,8 @@ LAN_TOKEN_PATH = Path.home() / ".croissant" / "lan-token"
 
 # Where a C1's backups are kept (backups.py), in the same ~/.croissant.
 BACKUPS_DIR = Path.home() / ".croissant" / "backups"
-# Where a C1's tapes sent whole are kept (tapes.py): in the open, for the owner to find.
-TAPES_DIR = Path.home() / "R1 Tapes"
+# Where a C1's tapes sent whole are kept (tapes.py): with the owner's notes, in SideBrain.
+TAPES_DIR = Path.home() / "Documents" / "SideBrain" / "Tapes"
 
 
 def _local_ipv4() -> list[str]:
