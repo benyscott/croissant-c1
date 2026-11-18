@@ -21,6 +21,7 @@ from websockets.http11 import Request, Response
 
 from . import __version__, pairing, settings, stt_worker
 from .backups import Backups
+from .tapes import Tapes
 from .config import APPLE_SILICON, IMAGE_MODELS, Config, trusted
 from .costs import Costs
 from .history import History
@@ -265,6 +266,7 @@ async def run(cfg: Config) -> None:
     # The C1's backups (backups.py) live in the owner's ~/.croissant, not under data_dir.
     backups = Backups(Path(cfg.backups_dir).expanduser(), cfg.backup_max_bytes, cfg.backup_chunk_bytes,
                       cfg.backup_manifest_max_bytes)
+    tapes = Tapes(Path(cfg.tapes_dir).expanduser(), cfg.tape_max_bytes, cfg.backup_chunk_bytes, cfg.backup_manifest_max_bytes)
 
     # The recordings' worker is warmed in the background so the first recording does
     # not pay the load.
@@ -279,6 +281,9 @@ async def run(cfg: Config) -> None:
             return
         if ws.request.path.rstrip("/") == "/backup":
             await backups.receive(ws)
+            return
+        if ws.request.path.rstrip("/") == "/tape":
+            await tapes.receive(ws)
             return
         if ws.request.path.rstrip("/") != cfg.path.rstrip("/"):
             await ws.close(1008, "unknown path")

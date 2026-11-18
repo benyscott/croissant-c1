@@ -45,6 +45,7 @@ import com.bleural.croissant.ask.ProvidersStore
 import com.bleural.croissant.ask.Speech
 import com.bleural.croissant.audio.Cues
 import com.bleural.croissant.audio.Links
+import com.bleural.croissant.audio.PlayerState
 import com.bleural.croissant.audio.Recorder
 import com.bleural.croissant.audio.RecorderState
 import com.bleural.croissant.audio.Sound
@@ -178,6 +179,7 @@ class Core(
     private val idleLevel = MutableStateFlow(0f)
     private val idleRinging = MutableStateFlow(emptyList<Timer>())
     private val idleRecorder = MutableStateFlow(RecorderState())
+    private val idlePlayer = MutableStateFlow(PlayerState())
     private val idleTranscribe = MutableStateFlow<TranscribeState?>(null)
     private val idleLocal = MutableStateFlow<LocalState>(LocalState.Off)
     private val idleAskConv = MutableStateFlow<String?>(null)
@@ -190,6 +192,7 @@ class Core(
     val level: StateFlow<Float> get() = service?.level ?: idleLevel
     val ringing: StateFlow<List<Timer>> get() = service?.ringing ?: idleRinging
     val recorder: StateFlow<RecorderState> get() = service?.recorder?.state ?: idleRecorder
+    val player: StateFlow<PlayerState> get() = service?.player?.state ?: idlePlayer
     val transcribing: StateFlow<TranscribeState?> get() = service?.transcriber?.state ?: idleTranscribe
     /** The Translator's local mode: off, loading, ready, or failed with why. */
     val local: StateFlow<LocalState> get() = service?.local?.state ?: idleLocal
@@ -258,6 +261,8 @@ class Core(
 
     /** Settings > Device > backup (backup/Backups.kt). */
     val backups = Backups(activity, scope) { server }
+    /** A tape sent whole to the Mac's croissant-server, to keep there. */
+    val tapeToMac = com.bleural.croissant.send.TapeToMac(scope) { server.takeIf { it.host.isNotEmpty() } }
 
     // ---- settings: persisted in Prefs, applied to the device ---------------
 
@@ -1418,7 +1423,7 @@ class Core(
     private var pttSpent = false
 
     private val handler = Handler(Looper.getMainLooper())
-    private val sleepSoon = Runnable { Kiosk.sleep(activity) }
+    private val sleepSoon = Runnable { ui.locked(); Kiosk.sleep(activity) }
 
     /** The activity is stopped, which every sleep does: the screen is off. */
     private var asleep = false
@@ -1604,8 +1609,21 @@ class Core(
     /** A tape's name; blank gives it back its number. */
     fun renameRecording(file: File, name: String) = recordings.rename(file, name)
 
+    /** Play or pause [file]; it plays on with the screen off. */
+    fun playTape(file: File) { service?.player?.toggle(file) }
+
+    /** Where in the playing tape, in ms. */
+    fun tapePositionMs(): Long = service?.player?.positionMs() ?: 0L
+
+    fun seekTape(fraction: Float) { service?.player?.seekTo(fraction) }
+
+    fun sendTapeToMac(file: File) {
+        recordings.items.value.firstOrNull { it.file == file }?.let(tapeToMac::send)
+    }
+
     fun deleteRecording(file: File) {
         service?.transcriber?.cancel(file)
+        if (service?.player?.state?.value?.file == file) service?.player?.stop()
         recordings.delete(file)
     }
 
@@ -1672,7 +1690,7 @@ class Core(
 
     // None of them while an update installs.
 
-    fun sleep() { if (!updating) Kiosk.sleep(activity) }
+    fun sleep() { if (!updating) { ui.locked(); Kiosk.sleep(activity) } }
 
     fun reboot() { if (!updating) Kiosk.reboot(activity) }
 

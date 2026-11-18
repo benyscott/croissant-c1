@@ -54,23 +54,23 @@ import kotlinx.coroutines.launch
 
 /*
  * The switcher (2026-11-16): the swipe up from the bottom edge, on any screen, as the control
- * centre is the pull down from the top. A short swipe goes Home; a long one brings up the places
- * last opened (Core's recents, as many as it keeps, newest first, not the one in front), and a tap
- * on one goes straight to it, to the page it was left on. The recents were the three discs above
- * Ask on the wheel until now; they live here instead. A tap on the dark puts it away, and the
- * wheel does nothing while it is up.
+ * centre is the pull down from the top. It brings up the places last opened (Core's recents, as
+ * many as it keeps, newest first, not the one in front), and a tap on one goes straight to it, to
+ * the page it was left on. The recents were the three discs above Ask on the wheel until now; they
+ * live here instead. A swipe down on it or a tap on the dark puts it away, and the wheel does
+ * nothing while it is up. ~~A short swipe went Home~~ (2026-11-18): it fought Home's own swipe up.
+ * On Home after a lock (BeamUi.kt, LockFace) the same swipe goes back to where the lock left off.
  */
 
 /**
- * Off (2026-11-16): it misbehaved on the R1, so the swipe is not listened for and the recents are
- * back above Ask. True turns it back on, the recents moving here.
+ * On (2026-11-18). False puts the recents back above Ask on the wheel and stops listening for the swipe.
  */
-internal const val SWITCHER_ON = false
+internal const val SWITCHER_ON = true
 
-/** How far up from the bottom a finger may land and still start the swipe, page px. */
-private const val BOTTOM_EDGE = 46
+/** How far up from the bottom a finger may land and still start the swipe, page px: an eighth of the screen. */
+private const val BOTTOM_EDGE = 80
 
-/** The swipe's measure, page px: under half of it lets go into Home, past it into the recents. */
+/** The swipe's measure, page px: let go past a third of it and the recents stay up. */
 private const val REACH = 260f
 
 private const val SWITCH_ROW = 84f
@@ -104,29 +104,62 @@ class SwitcherState(private val scope: CoroutineScope) {
 
 /**
  * The swipe from the bottom edge, on the whole canvas: a finger landing in the bottom
- * [BOTTOM_EDGE] px and going up past the slop brings the switcher up with it. Let go under half
- * of [REACH] and it is Home ([onHome]); past it, the recents stay up. Watched in the Initial
- * pass, like the control centre's edge, so a scrolling page under it never sees it; a tap there,
- * or a drag that sets off sideways or down, is the page's. Off while [enabled] says so (the keys up).
+ * [BOTTOM_EDGE] px and going up brings the switcher up with it; let go past a third of [REACH]
+ * and the recents stay up, else they go back down. Watched in the Initial pass, like the control
+ * centre's edge, and taken at half the slop, so Home's own swipe up and a scrolling page never
+ * see it; a tap there, or a drag that sets off sideways or down, is the page's. Off while
+ * [enabled] says so (the keys up). While [locked], the panel stays down and the same swipe,
+ * past the same third, is [onUnlock].
  */
-fun Modifier.switcherEdge(state: SwitcherState, enabled: () -> Boolean, onHome: () -> Unit): Modifier = pointerInput(state) {
+fun Modifier.switcherEdge(state: SwitcherState, enabled: () -> Boolean, locked: () -> Boolean, onUnlock: () -> Unit): Modifier = pointerInput(state) {
     val edge = BOTTOM_EDGE.px.toPx()
     val reach = REACH.px.toPx()
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         if (!enabled() || down.position.y < size.height - edge || state.shown.value > 0f) return@awaitEachGesture
-        val slop = viewConfiguration.touchSlop
+        val slop = viewConfiguration.touchSlop / 2
+        val unlocking = locked()
         var swiping = false
+        var rise = 0f
         while (true) {
             val c = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
             if (!c.pressed) break
-            if (swiping) { state.drag(c.positionChange().y, reach); c.consume(); continue }
+            rise = down.position.y - c.position.y
+            if (swiping) { if (!unlocking) state.drag(c.positionChange().y, reach); c.consume(); continue }
             val d = c.position - down.position
-            if (-d.y > slop && -d.y > abs(d.x)) { swiping = true; state.drag(d.y + slop, reach); c.consume() }
+            if (-d.y > slop && -d.y > abs(d.x)) { swiping = true; if (!unlocking) state.drag(d.y + slop, reach); c.consume() }
             else if (d.getDistance() > slop) return@awaitEachGesture
         }
         if (!swiping) return@awaitEachGesture
-        if (state.shown.value >= 0.5f) state.open() else { state.close(null); onHome() }
+        when {
+            unlocking -> if (rise >= reach / 3) onUnlock()
+            state.shown.value >= 1f / 3 -> state.open()
+            else -> state.close(null)
+        }
+    }
+}
+
+/**
+ * The swipe down that puts the recents away, anywhere on them while their list is at its top:
+ * the panel follows the finger, and let go a third of the way down it goes; else it comes back.
+ * A swipe up is the list's, to scroll.
+ */
+private fun Modifier.swipeDownCloses(state: SwitcherState, atTop: () -> Boolean): Modifier = pointerInput(state) {
+    val reach = REACH.px.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        if (!state.open) return@awaitEachGesture
+        val slop = viewConfiguration.touchSlop
+        var closing = false
+        while (true) {
+            val c = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
+            if (!c.pressed) break
+            if (closing) { state.drag(c.positionChange().y, reach); c.consume(); continue }
+            val d = c.position - down.position
+            if (d.y > slop && d.y > abs(d.x) && atTop()) { closing = true; state.drag(d.y - slop, reach); c.consume() }
+            else if (d.getDistance() > slop) return@awaitEachGesture
+        }
+        if (closing) { if (state.shown.value > 2f / 3) state.open() else state.close() }
     }
 }
 
@@ -138,12 +171,13 @@ fun Modifier.switcherEdge(state: SwitcherState, enabled: () -> Boolean, onHome: 
 internal fun BeamSwitcher(state: SwitcherState, places: List<Place>, apps: List<InstalledApp>, r: Ramp, onOpen: (Place) -> Unit) {
     val showing by remember(state) { derivedStateOf { state.shown.value > 0f } }
     if (!showing) return
-    Box(Modifier.fillMaxSize()) {
+    val scroll = rememberScrollState()
+    Box(Modifier.fillMaxSize().swipeDownCloses(state) { scroll.value == 0 }) {
         Box(Modifier.fillMaxSize().drawBehind { drawRect(r.ground, alpha = 0.9f * state.shown.value) }.tappable { state.close() })
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = (CANVAS_H - 40).px)
                 .graphicsLayer { translationY = size.height * (1f - state.shown.value); alpha = state.shown.value }
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(horizontal = 32.px, vertical = 24.px),
             verticalArrangement = Arrangement.Bottom,
         ) {

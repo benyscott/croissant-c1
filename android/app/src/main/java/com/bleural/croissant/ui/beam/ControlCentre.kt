@@ -31,6 +31,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -44,6 +48,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Velocity
+import android.text.format.DateFormat
+import java.time.OffsetDateTime
 import com.bleural.croissant.AgentAlert
 import com.bleural.croissant.AgentDone
 import com.bleural.croissant.AskOption
@@ -59,7 +70,8 @@ import com.bleural.croissant.ui.PowerAction
 import com.bleural.croissant.ui.SheetAction
 import com.bleural.croissant.ui.SheetState
 import com.bleural.croissant.ui.WheelTarget
-import com.bleural.croissant.ui.controlDrag
+import com.bleural.croissant.ui.clock
+import com.bleural.croissant.ui.rememberMinuteTick
 import com.bleural.croissant.ui.held
 import com.bleural.croissant.ui.tappable
 import kotlin.math.ceil
@@ -83,9 +95,20 @@ private const val VOLUME_X = 32
 private const val DISPLAY_X = 116
 private const val KEYS_LEFT = 296f
 private const val KEYS_RIGHT = 406f
-private const val KEYS_TOP = 117f
-private const val KEYS_MID = 227f
-private const val KEYS_BOTTOM = 337f
+// Two rows, 110 apart, on the levels' middle (227).
+private const val KEYS_TOP = 172f
+private const val KEYS_BOTTOM = 282f
+/** The top line's middle: the time, the signal and the battery, over the levels at 70. */
+private const val TOP_MID = 39f
+/** The battery: a 50 x 28 body and a 3 x 10 nub, its right 32 clear of the edge; the level in it at 22. */
+private const val BATT_W = 50f
+private const val BATT_H = 28f
+private const val NUB_W = 3f
+private const val NUB_H = 10f
+private val BATT_TYPE = BeamType.Value.copy(fontSize = 22f.pxSp, fontWeight = FontWeight.Medium, letterSpacing = 0f.pxSp)
+private const val BATT_X = 480f - 32f - BATT_W - NUB_W
+/** The signal bars' gap to the battery. */
+private const val BARS_GAP = 16f
 
 /** A level's segments: eight, 56 x 22, 30 apart, the top one at y 86, the bottom one ending at 318. */
 private const val SEGMENTS = 8
@@ -101,14 +124,14 @@ private const val LEVEL_GLYPH = 336f
  * The control centre, with the room's pull and state ([ControlState]): the page
  * under it dimmed to 10% (black at 90%) and what it holds sliding down from the top. Sound and
  * Display as two levels of eight stacked segments (56 x 22, 8 apart, lit white from the bottom,
- * from y 86 to 318) with their glyphs under them at 336; six round keys of 84 to their right,
- * 110 apart both ways, centred on 117, 227 and 337: Wi-Fi and Bluetooth, the tailnet and Sound,
- * the battery and Power. Wi-Fi, Bluetooth, the tailnet and Sound are white with a black glyph
- * when on and a grey ring when off; Power a red ring; the battery its level as a ring (white,
- * green while it charges, red when low) round the percent. Everything 32 px clear of the sides.
- * A tap or a drag on a level sets it (a muted volume's segments are grey); a tap on Wi-Fi,
- * Bluetooth or the tailnet flips it and a long press opens its page; Sound mutes; the battery
- * opens Battery; Power offers Sleep, Restart and Power off through the sheet. A tap on the dark
+ * from y 86 to 318) with their glyphs under them at 336; four round keys of 84 to their right,
+ * 110 apart both ways, centred on 172 and 282: Wi-Fi and Bluetooth, Sound and Power. Wi-Fi,
+ * Bluetooth and Sound are white with a black glyph when on and a grey ring when off; Power a red
+ * ring. Over them a top line: the time at the left, the signal and the battery at the right
+ * ([BatteryMark]). Everything 32 px clear of the sides. The tailnet has no key: it stays on
+ * (2026-11-17; Settings > Tailscale still turns it). A tap or a drag on a level sets it (a muted
+ * volume's segments are grey); a tap on Wi-Fi or Bluetooth flips it and a long press opens its
+ * page; Sound mutes; the battery opens Battery; Power offers Sleep, Restart and Power off through the sheet. A tap on the dark
  * closes it, a drag on what it holds pushes it back. The wheel does nothing while it is open.
  *
  * It was 34 px lower, with four keys and a top bar of its own over the dark, until the top bar
@@ -143,30 +166,49 @@ internal fun BeamControlCenter(
     val sheet = LocalSheet.current
     // Whether it is on screen at all; the number itself is read in draw and layer blocks only.
     val showing by remember(state) { derivedStateOf { state.shown.value > 0f } }
+    val twentyFour = DateFormat.is24HourFormat(LocalContext.current)
+    val minute by rememberMinuteTick()
+    val time = remember(minute, twentyFour) { clock(OffsetDateTime.now(), twentyFour).lowercase() }
+    // The controls and the notices scroll as one (2026-11-17): a drag scrolls them, and what is
+    // left of an upward drag once they are at their end pushes the whole thing back, as a drag on
+    // the controls alone did before. Put away, it opens again at the top.
+    val scroll = rememberScrollState()
+    LaunchedEffect(state.open) { if (!state.open) scroll.scrollTo(0) }
+    val push = remember(state) { pushBack(state) }
     Box(Modifier.fillMaxSize()) {
         if (showing) Box(Modifier.fillMaxSize().drawBehind { drawRect(r.ground, alpha = 0.9f * state.shown.value) }.tappable { state.close() })
-        Box(
-            Modifier.fillMaxWidth().height(PANEL.px)
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = SCREEN_H.px)
                 .graphicsLayer { translationY = size.height * (state.shown.value - 1f) }
                 .onSizeChanged { state.height = it.height }
-                .controlDrag(state),
+                .nestedScroll(push)
+                .verticalScroll(scroll),
         ) {
+        Box(Modifier.fillMaxWidth().height(PANEL.px)) {
+            // The top line: the time at the left; the signal and the battery at the right.
+            Box(Modifier.offset(x = VOLUME_X.px, y = (TOP_MID - 20f).px).height(40.px), contentAlignment = Alignment.CenterStart) {
+                Text(time, style = BeamType.Value, color = r.ink, maxLines = 1)
+            }
+            // The signal left of the battery; nothing without a SIM in use.
+            device.cell?.let { cell ->
+                Canvas(Modifier.offset(x = (BATT_X - BARS_GAP - BARS_W).px, y = (TOP_MID - BARS_H / 2).px).size(BARS_W.px, BARS_H.px)) {
+                    cellBars(cell, 0f, 0f, size.width / BARS_W, r.ink, r.sub, r.deep)
+                }
+            }
+            BatteryMark(device, r, onClick = onOpenBattery)
             LevelKey(VOLUME_X, if (muted) Glyphs.SoundOff else Glyphs.Sound, volume, r, faded = muted) { if (muted) onMute(false); onVolume(it) }
             LevelKey(DISPLAY_X, Glyphs.Display, brightness, r, faded = false, onChange = onBrightness)
+            // Four keys (2026-11-17): the tailnet stays on, so its key went; the battery is the top line's.
             RoundKey(KEYS_LEFT, KEYS_TOP, Glyphs.Wifi, if (device.wifiEnabled) r.ink else null, r.sub, r, onClick = {
                 Links.touched(); onWifi(!device.wifiEnabled); Cues.play(if (device.wifiEnabled) Sound.SwitchOff else Sound.SwitchOn)
             }, onLongClick = onOpenWifi)
             RoundKey(KEYS_RIGHT, KEYS_TOP, Glyphs.Bluetooth, if (device.bluetoothOn) r.ink else null, r.sub, r, onClick = {
                 onBluetooth(!device.bluetoothOn); Cues.play(if (device.bluetoothOn) Sound.SwitchOff else Sound.SwitchOn)
             }, onLongClick = onOpenBluetooth)
-            RoundKey(KEYS_LEFT, KEYS_MID, Glyphs.Tailnet, if (device.tailnetUp) r.ink else null, r.sub, r, onClick = {
-                onTailnet(!device.tailnetUp); Cues.play(if (device.tailnetUp) Sound.SwitchOff else Sound.SwitchOn)
-            }, onLongClick = onOpenTailnet)
             // Muting sounds its switch before the gain goes, unmuting after it is back: both are heard.
-            RoundKey(KEYS_RIGHT, KEYS_MID, if (muted) Glyphs.SoundOff else Glyphs.Sound, if (muted) null else r.ink, r.sub, r, onClick = {
+            RoundKey(KEYS_LEFT, KEYS_BOTTOM, if (muted) Glyphs.SoundOff else Glyphs.Sound, if (muted) null else r.ink, r.sub, r, onClick = {
                 if (muted) { onMute(false); Cues.play(Sound.SwitchOn) } else { Cues.play(Sound.SwitchOff); onMute(true) }
             })
-            BatteryKey(KEYS_LEFT, KEYS_BOTTOM, device, r, onClick = onOpenBattery)
             RoundKey(KEYS_RIGHT, KEYS_BOTTOM, Glyphs.Power, null, r.danger, r, onClick = {
                 sheet.show(listOf(
                     SheetAction("sleep", r.ink, Glyphs.Moon) { state.close(null); onPower(PowerAction.Sleep) },
@@ -175,14 +217,11 @@ internal fun BeamControlCenter(
                 ))
             })
         }
-        // What waits on you, under the keys, sliding with them: a permission of any session, then turns that ended.
-        if (showing && (alerts.isNotEmpty() || done.isNotEmpty())) Column(
-            Modifier.offset(y = PANEL.px).fillMaxWidth().heightIn(max = (SCREEN_H - PANEL).px)
-                .graphicsLayer { translationY = state.height * (state.shown.value - 1f); alpha = state.shown.value }
-                .verticalScroll(rememberScrollState()),
-        ) {
+        // What waits on you, under the keys, scrolling with them: a permission of any session, then turns that ended.
+        if (showing) {
             alerts.forEach { a -> AlertCard(a, onOpen = { onOpenAlert(a) }, onPick = { o -> onPickAlert(a, o) }) }
             done.forEach { d -> DoneCard(d, onOpen = { onOpenDone(d) }, onDismiss = { onDismissDone(d) }) }
+        }
         }
         // Closed, a dot at the top right says something waits, in the hue of its agent: pull down to see it.
         val first = alerts.firstOrNull()?.agent ?: done.firstOrNull()?.agent
@@ -191,8 +230,32 @@ internal fun BeamControlCenter(
     if (state.open) WheelTarget { false }
 }
 
-/** The screen's height in page px: what is left under the keys holds the alerts. */
+/** The screen's height in page px: the most the controls and the notices under them take. */
 private const val SCREEN_H = 640f
+
+/**
+ * The control centre's drag, now that the controls scroll with the notices: what the scroll
+ * leaves of an upward drag (it is at its end, or there is nothing to scroll) pushes the panel
+ * back; while it is partly back, a downward drag brings it down before anything scrolls; the
+ * finger lifting settles it as [ControlState.release] does.
+ */
+private fun pushBack(state: ControlState) = object : NestedScrollConnection {
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (source != NestedScrollSource.UserInput || available.y <= 0f || state.shown.value >= 1f) return Offset.Zero
+        state.drag(available.y)
+        return Offset(0f, available.y)
+    }
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        if (source != NestedScrollSource.UserInput || available.y >= 0f) return Offset.Zero
+        state.drag(available.y)
+        return Offset(0f, available.y)
+    }
+    override suspend fun onPreFling(available: Velocity): Velocity {
+        if (state.shown.value >= 1f) return Velocity.Zero
+        state.release()
+        return available
+    }
+}
 
 /**
  * Who a notice is from, over it: the folder and the agent in grey, the conversation's title in
@@ -289,32 +352,41 @@ private fun RoundKey(cx: Float, cy: Float, glyph: ImageVector, fill: Color?, rin
 }
 
 /**
- * The battery as a key of the control centre, 84 across, centred on ([cx], [cy]): a 3 px ring
- * faint all round and lit clockwise from the top to the level, the percent in [BeamType.Value]
- * in its middle. White; green while it charges; the danger red, the percent too, at 15% and
- * under off the charger. Not read yet, the faint ring alone. A tap opens Battery.
+ * The battery at the top line's right, as a phone draws it (2026-11-18): a rounded body outlined
+ * in grey with a nub at the right, filled from the left to the level, the level's number in its
+ * middle without a percent sign, black over the fill and white past it. The fill white; green
+ * while it charges; the danger red at 15% and under off the charger. Not read yet, the outline
+ * alone. A tap opens Battery. The number is 22, under the kit's 26, as it has to fit the body.
  */
 @Composable
-private fun BatteryKey(cx: Float, cy: Float, device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
+private fun BatteryMark(device: DeviceStatus, r: Ramp, onClick: () -> Unit) {
     val pct = device.batteryPct
-    val low = pct in 0..15 && !device.charging
-    val lit = when {
+    val fill = when {
         device.charging -> Ink.Ok
-        low -> r.danger
+        pct in 0..15 -> r.danger
         else -> r.ink
     }
+    val text = rememberTextMeasurer()
+    // The tap reaches 12 round it.
     Box(
-        Modifier.offset(x = (cx - 42f).px, y = (cy - 42f).px).size(84.px).clip(CircleShape).held(onClick, null),
-        contentAlignment = Alignment.Center,
+        Modifier.offset(x = (BATT_X - 12f).px, y = (TOP_MID - BATT_H / 2 - 12f).px)
+            .size((BATT_W + NUB_W + 24f).px, (BATT_H + 24f).px).held(onClick, null),
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val w = 3.px.toPx()
-            val inset = Offset(w / 2, w / 2)
-            val ring = Size(size.width - w, size.height - w)
-            drawArc(r.deep, 0f, 360f, false, inset, ring, style = Stroke(w))
-            if (pct >= 0) drawArc(lit, -90f, 360f * pct.coerceIn(0, 100) / 100f, false, inset, ring, style = Stroke(w, cap = StrokeCap.Round))
+        Canvas(Modifier.offset(12.px, 12.px).size((BATT_W + NUB_W).px, BATT_H.px)) {
+            val u = size.height / BATT_H
+            val line = 2f * u
+            val bw = BATT_W * u
+            drawRoundRect(r.sub, Offset(line / 2, line / 2), Size(bw - line, size.height - line), CornerRadius(7f * u), style = Stroke(line))
+            drawRoundRect(r.sub, Offset(bw, (BATT_H - NUB_H) / 2 * u), Size(NUB_W * u, NUB_H * u), CornerRadius(1.5f * u))
+            if (pct < 0) return@Canvas
+            val inner = 4f * u
+            val edge = inner + (bw - 2 * inner) * pct.coerceIn(0, 100) / 100f
+            drawRoundRect(fill, Offset(inner, inner), Size(edge - inner, size.height - 2 * inner), CornerRadius(3f * u))
+            val laid = text.measure("$pct", BATT_TYPE)
+            val at = Offset((bw - laid.size.width) / 2, (size.height - laid.size.height) / 2)
+            clipRect(right = edge) { drawText(laid, r.ground, at) }
+            clipRect(left = edge) { drawText(laid, r.ink, at) }
         }
-        if (pct >= 0) Text("$pct", style = BeamType.Value, color = if (low) r.danger else r.ink, maxLines = 1)
     }
 }
 

@@ -28,8 +28,9 @@ internal object BackupWire {
     private const val DISK_FULL = "the disk on this machine is full"
     private val DAMAGED = Regex("""the backup arrived damaged: (\d+) bytes, sha256 \w+, expected (\d+) bytes""")
 
-    fun begin(size: Long, sha256: String): String =
-        JSONObject().put("type", "begin").put("size", size).put("sha256", sha256).toString()
+    fun begin(size: Long, sha256: String, about: Map<String, String> = emptyMap()): String =
+        JSONObject().put("type", "begin").put("size", size).put("sha256", sha256)
+            .also { o -> about.forEach { (k, v) -> o.put(k, v) } }.toString()
 
     fun reply(text: String): Reply {
         val o = try { JSONObject(text) } catch (e: JSONException) { return Reply.Other(text) }

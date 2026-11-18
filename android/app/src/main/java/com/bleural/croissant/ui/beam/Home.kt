@@ -52,12 +52,11 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.floor
 
 /*
  * Beam's Home (2026-10-27): the date with the weather now beside it, the time big, the croissant
- * mascot under it with its ears in the foot of the digits, and the app dots at the bottom. Nothing
- * else. A tap opens the day in place (HomeDay.kt). Every number is a page pixel on the 480 x 640
+ * mascot under it with its ears in the foot of the digits. Nothing else: the app dots at the
+ * bottom went (2026-11-18). A tap opens the day in place (HomeDay.kt). Every number is a page pixel on the 480 x 640
  * canvas, y from the very top. The weather is Core's in the shared words (ui/Weather.kt).
  */
 
@@ -101,10 +100,8 @@ private const val DAY_CROISSANT_INK = 5f
 /** Around the croissant in its corner, what a tap there takes as the croissant. */
 private const val DAY_CROISSANT_REACH = 12f
 
-// The move: the dots rise to the group heads from a tenth of the way, the rest of the row is
-// gone by 0.6, and each group comes up over the last 0.35, one after another 0.08 apart.
+// The move: the group heads' dots come up from a tenth of the way, and each group comes up over the last 0.35, one after another 0.08 apart.
 private const val DOTS_FROM = 0.1f
-private const val ROW_GONE_BY = 0.6f
 private const val GROUP_FROM = 0.55f
 private const val GROUP_STAGGER = 0.08f
 private const val GROUP_OVER = 0.35f
@@ -118,23 +115,14 @@ private const val EDGE_SLOP = 12f
 private const val EDGE_TRAVEL = 0.7f
 private const val EDGE_KEEP = 0.66f
 
-// The features as dots: r 7 in each hue, from x 42 to 438 (44 apart for the ten the page drew,
-// 39.6 for eleven), on y 596. Each owns a slice a pitch wide from the dots' row to the bottom,
-// 44 above it: [tileAt]. The room's own places from Ask down, the pinned apps among them, never
-// the recents above Ask (2026-10-17), so the pitch is the room's.
-private const val DOT_X = 42f
-private const val DOT_END = 438f
-private fun dotPitch(n: Int) = (DOT_END - DOT_X) / maxOf(1, n - 1)
-private const val DOT_Y = 596f
+/** The day's group heads' dots' radius. */
 private const val DOT_R = 7f
-private const val DOT_REACH = 44f
 
 /**
  * Home and, a tap on it, its day. The croissant plays idle v3 all the while (CroissantMoves.kt) and
  * looks down at the day.
  *
- * A dot goes to its panel through the room's own tap ([tileAt], read by the shell's
- * `roomGestures`), so leaving Home sounds once. A tap on the rest opens the day; on the day, a
+ * A tap anywhere opens the day; on the day, a
  * tap on a group opens its feature and a tap on the croissant puts the day away, as the
  * elastic pull and the left edge do.
  */
@@ -152,7 +140,6 @@ internal fun Home(room: RoomState, d: PanelDeps, apps: List<InstalledApp>, home:
     val temp = w?.let { "${it.temp}°" }
     val day = remember(d.events, d.reminders, d.timers, now, twentyFour) { dayOf(d.events, d.reminders, d.timers, now, twentyFour) }
     val groups = remember(day) { dayGroups(day) }
-    val dots = room.places.drop(room.entry)
     val text = rememberTextMeasurer(cacheSize = 32)
     PlayCroissant(home.croissant)
     DayMove(home)
@@ -171,7 +158,7 @@ internal fun Home(room: RoomState, d: PanelDeps, apps: List<InstalledApp>, home:
                         val p = home.progress
                         dateLine(text, dateOf(now), temp, glyph, r, p)
                         clockAt(text, now, twentyFour, r, p)
-                        homeDots(dots, apps, groups, p)
+                        headDots(groups, p)
                         if (p > 0f) drawDay(text, day, groups, { g -> ((p - GROUP_FROM - g * GROUP_STAGGER) / GROUP_OVER).coerceIn(0f, 1f) }, r)
                     }
                 }
@@ -188,8 +175,8 @@ internal fun Home(room: RoomState, d: PanelDeps, apps: List<InstalledApp>, home:
                     }
                 }
                 if (!home.open) {
-                    // Everything over the dots is the way into the day; it ends clear of the dots' slices.
-                    Box(Modifier.size(480.px, (DOT_Y - DOT_REACH).px).tappable { if (room.homeTarget > 0.5f) home.openDay() })
+                    // All of Home is the way into the day.
+                    Box(Modifier.size(480.px, 640.px).tappable { if (room.homeTarget > 0.5f) home.openDay() })
                 } else {
                     val left = DAY_CROISSANT_X - DAY_CROISSANT_W / 2 - DAY_CROISSANT_REACH
                     val height = DAY_CROISSANT_W * CROISSANT_ART_HEIGHT / CROISSANT_ART_WIDTH + 2 * DAY_CROISSANT_REACH
@@ -279,36 +266,10 @@ private fun DrawScope.clockAt(m: TextMeasurer, now: OffsetDateTime, twentyFour: 
 }
 
 /**
- * The row of dots. On the way to the day, the dot of each feature that heads a group rises to
- * its head and the rest fade; a group whose feature has no dot on the row has its head's dot
- * come up in place.
+ * The day's group heads' dots, coming up as the day opens. Home itself has no row of dots any
+ * more (2026-11-18): it read as clutter; the side wheel reaches every place.
  */
-private fun DrawScope.homeDots(dots: List<Place>, apps: List<InstalledApp>, groups: List<DayGroup>, p: Float) {
-    val pitch = dotPitch(dots.size)
+private fun DrawScope.headDots(groups: List<DayGroup>, p: Float) {
     val rise = ((p - DOTS_FROM) / (1f - DOTS_FROM)).coerceIn(0f, 1f)
-    val rest = (1f - p / ROW_GONE_BY).coerceIn(0f, 1f)
-    dots.forEachIndexed { i, place ->
-        val x = DOT_X + i * pitch
-        val hue = rampOf(place, apps).hue
-        val g = groups.firstOrNull { place == Place.Of(it.feature) }
-        if (g == null) { if (rest > 0f) dot(x, DOT_Y, DOT_R, hue.copy(alpha = rest)); return@forEachIndexed }
-        dot(lerp(x, HEAD_DOT_X, rise), lerp(DOT_Y, g.head - HEAD_DOT_RISE, rise), DOT_R, hue)
-    }
-    for (g in groups) {
-        if (dots.none { it == Place.Of(g.feature) }) dot(HEAD_DOT_X, g.head - HEAD_DOT_RISE, DOT_R, rampOf(g.feature).hue.copy(alpha = rise))
-    }
-}
-
-/**
- * The place whose dot on Home is under a point in page pixels, or null; null too away from
- * Home and while the day is open, the dots having gone up to it. Generous: each dot owns its
- * pitch's slice of the row, the outer two to the page's edges, from 44 above the dots to the
- * bottom. The dots start at Ask ([RoomState.entry]).
- */
-internal fun tileAt(room: RoomState, home: HomeState, x: Float, y: Float): Int? {
-    if (room.homeTarget <= 0.5f || home.open || y < DOT_Y - DOT_REACH) return null
-    val n = room.count - room.entry
-    val pitch = dotPitch(n)
-    val col = floor((x - DOT_X + pitch / 2) / pitch).toInt()
-    return room.entry + col.coerceIn(0, n - 1)
+    if (rise > 0f) for (g in groups) dot(HEAD_DOT_X, g.head - HEAD_DOT_RISE, DOT_R, rampOf(g.feature).hue.copy(alpha = rise))
 }

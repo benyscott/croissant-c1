@@ -89,10 +89,13 @@ internal class BackupClient(private val server: Prefs.Server) {
         }
     }
 
-    /** [made] up to the server; [progress] gets the bytes it has taken, after each `got`. */
-    suspend fun upload(made: Made, progress: (Long) -> Unit): Answer<Kept> = withContext(Dispatchers.IO) {
+    /**
+     * [made] up to the server; [progress] gets the bytes it has taken, after each `got`. A tape
+     * goes the same way on `/tape`, with [about] (its name and start) in the begin frame.
+     */
+    suspend fun upload(made: Made, path: String = "/backup", about: Map<String, String> = emptyMap(), progress: (Long) -> Unit): Answer<Kept> = withContext(Dispatchers.IO) {
         val events = Channel<Event>(Channel.UNLIMITED)
-        val ws = sockets.newWebSocket(get("/backup"), object : WebSocketListener() {
+        val ws = sockets.newWebSocket(get(path), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { events.trySend(Event.Open) }
             override fun onMessage(webSocket: WebSocket, text: String) { events.trySend(Event.Text(text)) }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { events.trySend(Event.Closed(code, reason)) }
@@ -101,14 +104,14 @@ internal class BackupClient(private val server: Prefs.Server) {
         })
         var kept = false
         try {
-            stopped { FileInputStream(made.file).use { exchange(ws, events, it, made, progress) } }.also { kept = it is Answer.Done }
+            stopped { FileInputStream(made.file).use { exchange(ws, events, it, made, about, progress) } }.also { kept = it is Answer.Done }
         } finally {
             // A socket closed before `saved` is how the server is told to drop the part.
             if (kept) ws.close(1000, null) else ws.cancel()
         }
     }
 
-    private suspend fun exchange(ws: WebSocket, events: Channel<Event>, input: InputStream, made: Made, progress: (Long) -> Unit): Answer<Kept> {
+    private suspend fun exchange(ws: WebSocket, events: Channel<Event>, input: InputStream, made: Made, about: Map<String, String>, progress: (Long) -> Unit): Answer<Kept> {
         when (val e = withTimeoutOrNull(CONNECT_TIMEOUT_MS + REPLY_TIMEOUT_MS) { events.receive() }) {
             Event.Open -> Unit
             is Event.Failed -> throw Stopped(when {
@@ -120,7 +123,7 @@ internal class BackupClient(private val server: Prefs.Server) {
             is Event.Text -> throw Stopped(BackupProblem.ServerSaid(machine, "it spoke before the connection opened"))
             null -> throw Stopped(BackupProblem.Unreachable(machine, address, "no answer in ${(CONNECT_TIMEOUT_MS + REPLY_TIMEOUT_MS) / 1000} s"))
         }
-        if (!ws.send(BackupWire.begin(made.size, made.sha256))) throw Stopped(BackupProblem.Dropped(machine, "the begin frame could not be sent"))
+        if (!ws.send(BackupWire.begin(made.size, made.sha256, about))) throw Stopped(BackupProblem.Dropped(machine, "the begin frame could not be sent"))
         when (val r = next(events, ready = false)) {
             is Reply.Ready -> Unit
             is Reply.Error -> throw Stopped(BackupWire.problem(r.message, machine))
