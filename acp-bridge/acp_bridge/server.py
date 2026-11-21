@@ -80,7 +80,7 @@ import secrets
 import signal
 import socket
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
@@ -149,6 +149,10 @@ class Session:
     made: datetime | None = None  # when it was made here: its date until its agent gives one
     title: str | None = None  # as its agent last listed it
     doing: str | None = None  # what its running turn does now, in a few words
+    # Loading a session makes its agent write to it, so its date moves though nothing was said.
+    # Opened here with no turn since: [held] is when, [shown] its date from before.
+    held: datetime | None = None
+    shown: str | None = None
 
     def name(self) -> str:
         """The conversation's title, else its first words, short."""
@@ -197,6 +201,7 @@ class Bridge:
         self.alerted: set[Client] = set()  # told every permission, in any session
         self.done: dict[tuple[str, str], Json] = {}  # a turn ended and not seen yet, by session
         self.epoch = secrets.token_hex(4)
+        self.stamps: dict[tuple[str, str], str] = {}  # each session's date as its agent last listed it
 
     # ---- agents ----------------------------------------------------------------------------
 
@@ -370,9 +375,18 @@ class Bridge:
             {"sessionId": s.id, "cwd": s.cwd} for (a, _), s in self.sessions.items()
             if a == agent_id and s.id not in known]
         for x in extra + listed.get("sessions", []):
-            s = self.sessions.get((agent_id, x["sessionId"]))
+            key = (agent_id, x["sessionId"])
+            s = self.sessions.get(key)
             if s and s.made and not x.get("updatedAt"):
                 x["updatedAt"] = s.made.isoformat().replace("+00:00", "Z")
+            if s and s.held and s.shown and (stamp := x.get("updatedAt")) and \
+                    datetime.fromisoformat(stamp) < s.held + timedelta(seconds=60):
+                x["updatedAt"] = s.shown  # only opened: it keeps its place
+            else:
+                if s:
+                    s.held = None  # said to since, here or elsewhere
+                if x.get("updatedAt"):
+                    self.stamps[key] = x["updatedAt"]
             if s and x.get("title"):
                 s.title = x["title"]
             x["running"] = bool(s and s.running)
@@ -391,6 +405,8 @@ class Bridge:
         async with s.opening:
             if s.running or s.waiting or (s.loaded and not s.log):  # live here, or new and empty
                 return s
+            if not s.running and not s.held:
+                s.held, s.shown = datetime.now(timezone.utc), self.stamps.get((agent_id, session_id))
             if not agent.can_load:
                 if not s.loaded:
                     await agent.call("session/resume", {"sessionId": s.id, "cwd": s.cwd, "mcpServers": []})
@@ -440,6 +456,7 @@ class Bridge:
 
     async def prompt(self, s: Session, text: str) -> None:
         s.running = True
+        s.held = None
         s.doing = "thinking"
         s.add({"sessionUpdate": "bridge_turn", "running": True})
         self.turn(s)
@@ -448,6 +465,7 @@ class Bridge:
             done = await agent.call("session/prompt", {
                 "sessionId": s.id, "prompt": [{"type": "text", "text": text}]})
             s.running = False
+            self.stamps[(s.agent, s.id)] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             s.add({"sessionUpdate": "bridge_turn", "running": False, "stopReason": done.get("stopReason")})
             self.ended(s, None)
         except Exception as e:

@@ -2,6 +2,7 @@ package com.bleural.croissant.net
 
 import com.bleural.croissant.Prefs
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -60,6 +61,9 @@ class AcpBridgeClient(private val bridge: () -> Prefs.AcpBridge) {
         if (!sent) { waiting.remove(id); throw IOException("the bridge went away") }
         val reply = try {
             withTimeout(timeoutMs) { answer.await() }
+        } catch (e: TimeoutCancellationException) {
+            // A cancellation, not an IOException: uncaught, it left a caller (the session list) loading for good.
+            throw IOException("the bridge did not answer $op")
         } finally {
             waiting.remove(id)
         }
