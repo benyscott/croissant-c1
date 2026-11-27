@@ -16,6 +16,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -161,20 +165,24 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
             else (last.offset + last.size - info.viewportEndOffset).toFloat().coerceAtLeast(0f)
         }
     }
-    // New lines follow the bottom only while the reader is there: scrolled back, they stay put.
-    // Only a scroll up lets go of the bottom: following it only ever goes down, so a follow cut
-    // short by the next chunk, the newest line already further on, never stops the following.
+    // New lines follow the bottom only while the reader is there. Any scroll up by hand lets go
+    // of it at once, mid-drag (a chunk arriving then no longer pulls the page back down); only
+    // coming to the very end again, or the down key, takes it up again. The following itself is
+    // the program's, not a hand's, so it never goes through [letGo].
     var stick by remember(session) { mutableStateOf(true) }
-    LaunchedEffect(list) {
-        var from = 0 to 0
-        snapshotFlow { list.isScrollInProgress }.collect { moving ->
-            val at = list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
-            if (moving) from = at
-            else if (below < far) stick = true
-            else if (at.first < from.first || (at.first == from.first && at.second < from.second)) stick = false
+    val letGo = remember(session) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y > 0f) stick = false
+                return Offset.Zero
+            }
         }
     }
+    LaunchedEffect(list) {
+        snapshotFlow { list.isScrollInProgress }.collect { moving -> if (!moving && !list.canScrollForward) stick = true }
+    }
     ChatWheel(list, pull) { up, atFoot -> if (up) stick = false else if (atFoot) stick = true }
+    val keep = with(LocalDensity.current) { ANSWER_TOP.px.toPx() }
     LaunchedEffect(c?.items?.size, (c?.items?.lastOrNull() as? ChatItem.Said)?.words?.length, c?.running, c?.asking, held) {
         if (!revealed || !stick) return@LaunchedEffect
         // To the foot's bottom, not its top: a hold's card grows as you talk, and its newest words are at its bottom.
@@ -183,12 +191,22 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
         if (list.layoutInfo.visibleItemsInfo.none { it.index == f }) list.animateScrollToItem(f)
         withFrameNanos { }
         val b = below
-        if (b > 0f && b != Float.MAX_VALUE) list.animateScrollBy(b)
+        if (b <= 0f || b == Float.MAX_VALUE) return@LaunchedEffect
+        // An answer being written is followed only until its first line is at the top, under the
+        // fade: from there it grows under the view, read at his pace, the down key to its end.
+        // An answer whose top is already above the view (he came back to its end) is followed on.
+        val items = c?.items.orEmpty()
+        val writing = if (c?.running == true && items.lastOrNull() is ChatItem.Said) items.lastIndex + 1 else -1
+        val top = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == writing }?.offset?.toFloat()
+        if (top != null && top >= keep && b > top - keep) {
+            stick = false
+            list.animateScrollBy(top - keep)
+        } else list.animateScrollBy(b)
     }
     Box(Modifier.fillMaxSize()) {
         PageTop(name, r) {
             LazyColumn(state = list, userScrollEnabled = revealed,
-                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown }.elasticPull(pull, INK, GROUND)) {
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown }.nestedScroll(letGo).elasticPull(pull, INK, GROUND)) {
                 item(key = "top") { Spacer(Modifier.height(8.px)) }
                 if (c != null) items(c.items.size, key = { it }) { i -> ChatItemView(c.items, i, r, streaming = c.running && i == c.items.lastIndex) }
                 item(key = "foot") {
@@ -288,6 +306,9 @@ private fun foot(list: LazyListState): Int = (list.layoutInfo.totalItemsCount - 
 
 /** How far under the view the newest line is before the down key shows; how long a way is jumped before the last glide. */
 private const val FAR = 240f
+
+/** Where an answer being written stops being followed: its first line this far under the list's top, clear of the top fade. */
+private const val ANSWER_TOP = 48f
 private const val LONG_WAY = 12
 private const val REVEAL_MS = 180
 

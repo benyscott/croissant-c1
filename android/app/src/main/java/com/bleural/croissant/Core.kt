@@ -527,6 +527,8 @@ class Core(
 
     override fun onResume(owner: LifecycleOwner) {
         Kiosk.enterLockTask(activity)
+        // Awake again: the alerts read anew, the socket opened again if the sleep took it.
+        agentAlerts.start()
         ui.woke()
     }
 

@@ -3,7 +3,9 @@ package com.bleural.croissant
 import android.util.Log
 import com.bleural.croissant.net.AcpBridgeClient
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,6 +102,13 @@ class AgentAlerts(
                     return@launch
                 } catch (e: IOException) {
                     Log.i(TAG, "bridge away: ${e.message}")
+                } catch (e: TimeoutCancellationException) {
+                    // The socket's own timeouts (no Wi-Fi yet after a sleep): asked again, not given up on.
+                    Log.i(TAG, "bridge slow: ${e.message}")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "alerts not read", e)
                 }
                 delay(wait)
                 wait = (wait * 2).coerceAtMost(MOST_MS)
