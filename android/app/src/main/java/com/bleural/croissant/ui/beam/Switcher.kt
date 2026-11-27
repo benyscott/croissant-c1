@@ -58,8 +58,9 @@ import kotlinx.coroutines.launch
  * many as it keeps, newest first, not the one in front), and a tap on one goes straight to it, to
  * the page it was left on. The recents were the three discs above Ask on the wheel until now; they
  * live here instead. A swipe down on it or a tap on the dark puts it away, and the wheel does
- * nothing while it is up. ~~A short swipe went Home~~ (2026-11-18): it fought Home's own swipe up.
- * On Home after a lock (BeamUi.kt, LockFace) the same swipe goes back to where the lock left off.
+ * nothing while it is up. A short flick instead is the room, every app on the wheel, from however
+ * deep the pages went (2026-11-27). On Home after a lock (BeamUi.kt, LockFace) the long swipe goes
+ * back to where the lock left off, and the flick is the room as anywhere.
  */
 
 /**
@@ -70,7 +71,7 @@ internal const val SWITCHER_ON = true
 /** How far up from the bottom a finger may land and still start the swipe, page px: an eighth of the screen. */
 private const val BOTTOM_EDGE = 80
 
-/** The swipe's measure, page px: let go past a third of it and the recents stay up. */
+/** The swipe's measure, page px: let go past a third of it and the recents stay up; under it, it was a flick. */
 private const val REACH = 260f
 
 private const val SWITCH_ROW = 84f
@@ -105,13 +106,13 @@ class SwitcherState(private val scope: CoroutineScope) {
 /**
  * The swipe from the bottom edge, on the whole canvas: a finger landing in the bottom
  * [BOTTOM_EDGE] px and going up brings the switcher up with it; let go past a third of [REACH]
- * and the recents stay up, else they go back down. Watched in the Initial pass, like the control
+ * and the recents stay up, under it and they go back down and it was a flick: [onFlick]. Watched in the Initial pass, like the control
  * centre's edge, and taken at half the slop, so Home's own swipe up and a scrolling page never
  * see it; a tap there, or a drag that sets off sideways or down, is the page's. Off while
- * [enabled] says so (the keys up). While [locked], the panel stays down and the same swipe,
+ * [enabled] says so (the keys up). While [locked], the panel stays down and the long swipe,
  * past the same third, is [onUnlock].
  */
-fun Modifier.switcherEdge(state: SwitcherState, enabled: () -> Boolean, locked: () -> Boolean, onUnlock: () -> Unit): Modifier = pointerInput(state) {
+fun Modifier.switcherEdge(state: SwitcherState, enabled: () -> Boolean, locked: () -> Boolean, onUnlock: () -> Unit, onFlick: () -> Unit): Modifier = pointerInput(state) {
     val edge = BOTTOM_EDGE.px.toPx()
     val reach = REACH.px.toPx()
     awaitEachGesture {
@@ -132,9 +133,9 @@ fun Modifier.switcherEdge(state: SwitcherState, enabled: () -> Boolean, locked: 
         }
         if (!swiping) return@awaitEachGesture
         when {
-            unlocking -> if (rise >= reach / 3) onUnlock()
-            state.shown.value >= 1f / 3 -> state.open()
-            else -> state.close(null)
+            unlocking && rise >= reach / 3 -> onUnlock()
+            !unlocking && state.shown.value >= 1f / 3 -> state.open()
+            else -> { state.close(null); onFlick() }
         }
     }
 }

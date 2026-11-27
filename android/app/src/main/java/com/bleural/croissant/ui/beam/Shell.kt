@@ -161,8 +161,10 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
     val switcher = remember { SwitcherState(scope) }
     // Home left, or a page opened over it, any way but the unlock: the lock's place is forgotten.
     LaunchedEffect(room) {
-        snapshotFlow { room.homeTarget < 0.5f || nav.canPop }.collect { away -> if (away) lock.forget() }
+        snapshotFlow { (room.homeTarget < 0.5f && !room.homeHeld) || nav.canPop }.collect { away -> if (away) lock.forget() }
     }
+    // Home's own swipe up, after a lock, goes back to where the lock left off.
+    LaunchedEffect(room) { room.unlocks = { lock.unlock() } }
     val recents by core.recents.collectAsStateWithLifecycle()
     val alerts by core.agentAlerts.list.collectAsStateWithLifecycle()
     val done by core.agentAlerts.done.collectAsStateWithLifecycle()
@@ -196,6 +198,7 @@ internal fun BeamShell(core: Core, nav: NavState, room: RoomState, home: HomeSta
                         .switcherEdge(
                             switcher, enabled = { SWITCHER_ON && !keyboard.open && control.shown.value == 0f },
                             locked = { lock.held && room.homeTarget > 0.5f && !nav.canPop }, onUnlock = { lock.unlock() },
+                            onFlick = { toRoom(nav, room) },
                         ),
                 ) {
                     Slides(nav) { screen ->
@@ -267,6 +270,18 @@ private fun Room(room: RoomState, d: PanelDeps, core: Core, home: HomeState) {
         // The camera's photos key opens Photos in place of the camera, as a jump of the room.
         OpenedLayer(room) { f -> Opened(f, d, core, onGallery = { room.goTo(room.placeOf(Feature.Photos)); Cues.play(Sound.ScreenIn) }) }
     }
+}
+
+/**
+ * The flick up from the bottom: the room, every app on the wheel, on the place it was on (from
+ * Home, on Ask, as Home's own swipe up), every page over it and the open one closed.
+ */
+private fun toRoom(nav: NavState, room: RoomState) {
+    val fromHome = room.homeTarget > 0.5f
+    if (!fromHome && !nav.canPop && room.openTarget < 0.5f) return
+    nav.home()
+    if (fromHome) room.depart() else room.closePanel()
+    Cues.play(if (fromHome) Sound.MenuIn else Sound.ScreenOut)
 }
 
 /** What is in front, for the switcher to leave out: an app's or an agent's page, else the place the room is on; null on Home. */

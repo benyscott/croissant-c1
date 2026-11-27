@@ -264,8 +264,10 @@ fun Modifier.roomGestures(
                 }
                 MODE_HOME_UP -> {
                     val stay = state.home >= 0.67f
-                    state.settleHome(stay)
-                    if (!stay) Cues.play(Sound.MenuIn)
+                    if (stay || state.unlocks?.invoke() != true) {
+                        state.settleHome(stay)
+                        if (!stay) Cues.play(Sound.MenuIn)
+                    }
                 }
                 MODE_HOME_EDGE -> {
                     val go = state.home > 0.33f

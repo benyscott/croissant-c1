@@ -142,7 +142,7 @@ internal class LockFace(private val nav: NavState, private val room: RoomState) 
                 room.leaveHome()
                 if (l.open) room.openPanel()
             }
-        }
+        } else room.goHome()
         l.pages.forEach { nav.push(it, sound = null) }
         Cues.play(Sound.ScreenIn)
         return true

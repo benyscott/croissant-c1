@@ -66,6 +66,8 @@ class RoomState(
     var posTarget by mutableFloatStateOf(0f); private set
     var openTarget by mutableFloatStateOf(0f); private set
     var homeTarget by mutableFloatStateOf(1f); private set
+    /** A finger has Home ([dragHome]) and has not let go: where it is going is not decided yet. */
+    var homeHeld by mutableStateOf(false); private set
     private var pullTarget = 0f
 
     /**
@@ -116,6 +118,12 @@ class RoomState(
      * a peg does (2026-10-17).
      */
     var opens: ((Place) -> Boolean)? = null
+
+    /**
+     * The swipe up out of Home, let go into the room: true when something else took it instead
+     * (Beam's lock, 2026-11-27: back to where the lock left off, not the room).
+     */
+    var unlocks: (() -> Boolean)? = null
 
     /**
      * The room laid out again (Beam's, 2026-10-17): [to] its places, Ask at [ask]. On Home,
@@ -190,8 +198,8 @@ class RoomState(
     /** Used by the back drag, which writes [open] straight from the finger. */
     fun scrubOpen(v: Float) { open = v.coerceIn(0f, 1f); openV = 0f; openTarget = open; stir() }
 
-    fun goHome() { homeTarget = 1f; openTarget = 0f; stir() }
-    fun leaveHome() { homeTarget = 0f; stir() }
+    fun goHome() { homeHeld = false; homeTarget = 1f; openTarget = 0f; stir() }
+    fun leaveHome() { homeHeld = false; homeTarget = 0f; stir() }
 
     /**
      * Leaving Home by the wheel, as a tap on a place does not: in Beam's room onto Ask
@@ -208,8 +216,9 @@ class RoomState(
      * back to it. Like [scrubOpen] it writes the number and parks the spring on it, so
      * releasing is the only thing that picks a destination.
      */
-    fun dragHome(v: Float) { home = v.coerceIn(0f, 1f); homeV = 0f; homeTarget = home; stir() }
+    fun dragHome(v: Float) { homeHeld = true; home = v.coerceIn(0f, 1f); homeV = 0f; homeTarget = home; stir() }
     fun settleHome(toHome: Boolean) {
+        homeHeld = false
         // The drag up out of Home lets go into the room: as [depart], Beam's onto Ask.
         if (!toHome && leavesToEntry) posTarget = entry.toFloat()
         homeTarget = if (toHome) 1f else 0f; stir()
@@ -228,6 +237,7 @@ class RoomState(
 
     /** Releasing that drag: on to Home and Ask under it, or back to the panel it left. */
     fun settleHomeFrom(from: Float, toHome: Boolean) {
+        homeHeld = false
         posTarget = if (toHome) entry.toFloat() else from.roundToInt().coerceIn(0, count - 1).toFloat()
         homeTarget = if (toHome) 1f else 0f; stir()
     }
