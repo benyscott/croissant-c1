@@ -5,7 +5,13 @@ import org.json.JSONObject
 /** One thing in a session's conversation: your words, the agent's, or one of its tool calls. */
 sealed interface ChatItem {
     data class You(val words: String) : ChatItem
-    data class Said(val words: String) : ChatItem
+    data class Said(val words: String) : ChatItem {
+        /** The words as shown: without a last `::choices` line, nor the start of one still being written. */
+        val shown: String get() = words.lastLine()?.let { (start, line) -> if (line.isChoices()) words.substring(0, start).trimEnd() else null } ?: words
+        /** The replies its last line offers (`::choices Push it | Not now`), each a key that sends it; none without one. */
+        val choices: List<String> get() = words.lastLine()?.second?.trim()?.takeIf { it.startsWith(CHOICES) }
+            ?.removePrefix(CHOICES)?.split('|')?.map { it.trim() }?.filter { it.isNotEmpty() }?.take(4).orEmpty()
+    }
     /** A tool call by ACP's [kind] (read, edit, execute, search, fetch, ...); [status] pending, in_progress, completed or failed. */
     data class Tool(val id: String, val title: String, val kind: String, val status: String) : ChatItem
 }
@@ -96,3 +102,17 @@ data class AgentChat(
         return copy(items = joined)
     }
 }
+
+/** The line an agent ends a message with to offer replies as keys (acp-bridge's R1 prompt, the brain's AGENTS.md). */
+private const val CHOICES = "::choices"
+
+/** The last line that is not blank, with where it starts; null for blank words. */
+private fun String.lastLine(): Pair<Int, String>? {
+    val end = trimEnd()
+    if (end.isEmpty()) return null
+    val start = end.lastIndexOf('\n') + 1
+    return start to end.substring(start)
+}
+
+/** A `::choices` line, or what may yet become one as it streams (":", "::cho"). */
+private fun String.isChoices(): Boolean = trim().let { it.startsWith(CHOICES) || (it.startsWith(":") && CHOICES.startsWith(it)) }

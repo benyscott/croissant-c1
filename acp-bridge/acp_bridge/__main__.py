@@ -24,6 +24,7 @@ from pathlib import Path
 from .acp import Agent, Json
 from .agents import ALL, Spec
 from .config import PATH, Config, addresses, pairing
+from .server import prompted
 
 
 def spec_of(id_: str) -> Spec:
@@ -142,7 +143,7 @@ async def try_(spec: Spec, prompt: str, cwd: str, answer: str | None, log) -> No
           f" session {sorted((caps.get('sessionCapabilities') or {}).keys())},"
           f" auth {[m.get('id') for m in info.get('authMethods', [])]}")
     try:
-        new = await agent.call("session/new", {"cwd": cwd, "mcpServers": []})
+        new = await agent.call("session/new", {"cwd": cwd, "mcpServers": [], **prompted(agent)})
         print(f"session {new['sessionId']}\n")
         started = time.monotonic()
         done = await agent.call("session/prompt", {

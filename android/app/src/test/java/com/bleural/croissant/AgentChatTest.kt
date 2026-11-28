@@ -57,4 +57,24 @@ class AgentChatTest {
         assertEquals(c, c.with(1, chunk("agent_message_chunk", "once")))
         assertEquals(listOf(ChatItem.Said("once")), c.items)
     }
+
+    @Test fun aLastChoicesLineIsKeysNotWords() {
+        val said = ChatItem.Said("Done, not pushed yet.\n\n::choices Push it | Not now \n")
+        assertEquals("Done, not pushed yet.", said.shown)
+        assertEquals(listOf("Push it", "Not now"), said.choices)
+    }
+
+    @Test fun aChoicesLineBeingWrittenIsHidden() {
+        assertEquals("Push it?", ChatItem.Said("Push it?\n::cho").shown)
+        assertEquals("Push it?", ChatItem.Said("Push it?\n:").shown)
+        assertEquals(emptyList<String>(), ChatItem.Said("Push it?\n::cho").choices)
+    }
+
+    @Test fun wordsWithoutChoicesAreAsTheyAre() {
+        val said = ChatItem.Said("Time: 3pm.\n::later, not a key line")
+        assertEquals(said.words, said.shown)
+        assertEquals(emptyList<String>(), said.choices)
+        assertEquals("a\n::choices x\nb", ChatItem.Said("a\n::choices x\nb").shown)
+        assertEquals(emptyList<String>(), ChatItem.Said("a\n::choices x\nb").choices)
+    }
 }

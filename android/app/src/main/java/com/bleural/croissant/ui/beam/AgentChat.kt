@@ -16,6 +16,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -208,7 +210,13 @@ internal fun AgentChatPage(agent: String, session: String, core: Core, nav: NavS
             LazyColumn(state = list, userScrollEnabled = revealed,
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shown }.nestedScroll(letGo).elasticPull(pull, INK, GROUND)) {
                 item(key = "top") { Spacer(Modifier.height(8.px)) }
-                if (c != null) items(c.items.size, key = { it }) { i -> ChatItemView(c.items, i, r, streaming = c.running && i == c.items.lastIndex) }
+                // The last answer's replies, as keys, once its turn is over and nothing waits on him.
+                val offer = c?.takeIf { !it.running && it.asking == null && held == null }?.items?.lastOrNull() as? ChatItem.Said
+                if (c != null) items(c.items.size, key = { it }) { i ->
+                    ChatItemView(c.items, i, r, streaming = c.running && i == c.items.lastIndex,
+                        choices = if (i == c.items.lastIndex) offer?.choices.orEmpty() else emptyList(),
+                        onChoice = { Cues.play(Sound.Commit); core.agents.sendEdited(it) })
+                }
                 item(key = "foot") {
                     Column {
                         if (c != null) {
@@ -331,15 +339,16 @@ private fun BoxScope.DownKey(r: Ramp, shown: Boolean, onClick: () -> Unit) {
 
 /** Item [i] of a conversation: your words a card, the agent's as markdown ([streaming] while they arrive), a tool call its line. */
 @Composable
-private fun ChatItemView(items: List<ChatItem>, i: Int, r: Ramp, streaming: Boolean) {
+private fun ChatItemView(items: List<ChatItem>, i: Int, r: Ramp, streaming: Boolean, choices: List<String> = emptyList(), onChoice: (String) -> Unit = {}) {
     when (val item = items[i]) {
         is ChatItem.You -> Column {
             Message(item.words.trim(), r.hue)
             if (items.getOrNull(i + 1) is ChatItem.You) Spacer(Modifier.height(16.px))
         }
-        is ChatItem.Said -> if (item.words.isNotBlank()) Column {
+        is ChatItem.Said -> if (item.shown.isNotBlank() || choices.isNotEmpty()) Column {
             // A long press on a word selects it, its handles to drag, the system's bubble to copy.
-            SelectionContainer { SaidWords(item.words, streaming, r) }
+            if (item.shown.isNotBlank()) SelectionContainer { SaidWords(item.shown, streaming, r) }
+            if (choices.isNotEmpty()) Choices(choices, r, onChoice)
             Spacer(Modifier.height(34.px))
         }
         is ChatItem.Tool -> ToolLine(item, r, last = items.getOrNull(i + 1) !is ChatItem.Tool)
@@ -395,6 +404,19 @@ private fun ToolLine(t: ChatItem.Tool, r: Ramp, last: Boolean) {
         if (glyph != null) Icon(glyph, null, Modifier.padding(start = 24.px, top = 14.px).size(28.px), colour)
         Text(t.title.ifBlank { t.kind }, style = BeamType.Value, color = colour, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = (if (glyph != null) 64f else 24f).px, end = 24.px).wordsAt(38f))
+    }
+}
+
+/**
+ * The replies an answer offers (its `::choices` line), as pills ringed in the hue, wrapping onto
+ * more rows when they do not fit one; a tap sends that reply as his next message.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Choices(choices: List<String>, r: Ramp, onPick: (String) -> Unit) {
+    FlowRow(Modifier.padding(start = 24.px, end = 24.px, top = 20.px), horizontalArrangement = Arrangement.spacedBy(12.px),
+        verticalArrangement = Arrangement.spacedBy(12.px)) {
+        choices.forEach { c -> Pill(c, r.hue, GROUND) { onPick(c) } }
     }
 }
 

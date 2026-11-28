@@ -100,6 +100,17 @@ HISTORY = {"user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "
            "tool_call_update", "plan"}
 log = logging.getLogger("acp-bridge")
 
+# Added to the system prompt of every session the bridge makes or loads, for an agent that takes
+# one (ACP's sessionCapabilities.systemPrompt): the R1 shows a last `::choices` line as keys.
+R1_PROMPT = """\
+You are being read on a Rabbit R1, a small handheld, where typing is slow. When your message
+ends by offering a choice or asking whether to go ahead (commit it? push it? option 1 or 2?),
+end it with one more line, the last of the message:
+::choices <reply> | <reply>
+2 to 4 replies, each 1 to 4 words, as the user would say them: "Push it | Not now", "Option 1 | Option 2".
+The R1 shows them as keys and sends the one tapped as their reply. Only then: no ::choices line
+when there is nothing to pick."""
+
 
 # What a tool call of each ACP kind is doing, as a verb.
 VERBS = {"read": "reading", "edit": "editing", "delete": "deleting", "move": "moving", "search": "searching",
@@ -125,6 +136,20 @@ def doing_of(update: Json) -> str | None:
         verb, what = "using", " ".join(what.split("__")[1:]).replace("_", " ")
     words = f"{verb} {what}".strip() if what else verb
     return words if len(words) <= 40 else words[:39].rstrip() + "…"
+
+
+def prompted(agent: Agent) -> Json:
+    """[R1_PROMPT] as a session's systemPrompt, for an agent that takes one; else nothing."""
+    caps = agent.info.get("agentCapabilities", {}).get("sessionCapabilities", {})
+    if not caps.get("systemPrompt"):
+        return {}
+    return {"systemPrompt": {"mode": "append", "content": [{"type": "text", "text": R1_PROMPT}]}}
+
+
+def without_choices(words: str) -> str:
+    """An agent's words without a last `::choices` line (the R1's keys)."""
+    head, _, last = words.rstrip().rpartition("\n")
+    return head if last.strip().startswith("::choices") else words
 
 
 class Refused(Exception):
@@ -314,7 +339,7 @@ class Bridge:
             cwd = str(Path(m["cwd"]).expanduser().resolve())
             if not Path(cwd).is_dir():
                 raise Refused(f"no folder {cwd}")
-            made = await agent.call("session/new", {"cwd": cwd, "mcpServers": []})
+            made = await agent.call("session/new", {"cwd": cwd, "mcpServers": [], **prompted(agent)})
             s = self.sessions[(agent_id, made["sessionId"])] = Session(agent_id, made["sessionId"], cwd,
                                                                       made=datetime.now(timezone.utc))
             s.loaded = True
@@ -409,13 +434,13 @@ class Bridge:
                 s.held, s.shown = datetime.now(timezone.utc), self.stamps.get((agent_id, session_id))
             if not agent.can_load:
                 if not s.loaded:
-                    await agent.call("session/resume", {"sessionId": s.id, "cwd": s.cwd, "mcpServers": []})
+                    await agent.call("session/resume", {"sessionId": s.id, "cwd": s.cwd, "mcpServers": [], **prompted(agent)})
                     s.loaded = True
                     await self.mode(agent_id, s)
                 return s
             s.replay = []
             try:
-                await agent.call("session/load", {"sessionId": s.id, "cwd": s.cwd, "mcpServers": []})
+                await agent.call("session/load", {"sessionId": s.id, "cwd": s.cwd, "mcpServers": [], **prompted(agent)})
                 replay = s.replay
             except AcpError as e:
                 if not s.log:
@@ -483,7 +508,7 @@ class Bridge:
                 break
             if kind == "agent_message_chunk" and u.get("content", {}).get("type") == "text":
                 said.append(u["content"].get("text", ""))
-        words = " ".join("".join(reversed(said)).split())
+        words = " ".join(without_choices("".join(reversed(said))).split())
         self.turn(s)
         notice = {"event": "done", "agent": s.agent, "sessionId": s.id, "cwd": s.cwd, "title": s.name(),
                   "words": words if len(words) <= 200 else words[:199].rstrip() + "…"}
